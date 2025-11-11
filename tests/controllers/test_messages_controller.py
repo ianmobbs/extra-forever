@@ -24,10 +24,12 @@ class TestMessageResponse:
             id="test123",
             subject="Test Subject",
             sender="test@example.com",
+            to=["recipient@example.com"],
             snippet="Test snippet"
         )
         assert response.id == "test123"
         assert response.subject == "Test Subject"
+        assert response.to == ["recipient@example.com"]
     
     def test_message_response_optional_snippet(self):
         """Test MessageResponse with None snippet."""
@@ -35,6 +37,7 @@ class TestMessageResponse:
             id="test123",
             subject="Test Subject",
             sender="test@example.com",
+            to=["recipient@example.com"],
             snippet=None
         )
         assert response.snippet is None
@@ -50,6 +53,7 @@ class TestImportResponse:
                 id="msg1",
                 subject="Subject 1",
                 sender="sender@example.com",
+                to=["recipient@example.com"],
                 snippet="snippet"
             )
         ]

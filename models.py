@@ -25,3 +25,25 @@ class Message(Base):
             f"<Message(id={self.id}, subject='{self.subject}', sender='{self.sender}', "
             f"to={self.to}, date='{self.date}', body_preview='{body_preview}')>"
         )
+
+
+class Category(Base):
+    """
+    ORM model for a custom email category.
+    """
+    __tablename__ = 'categories'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False, unique=True)
+    description = Column(Text, nullable=False)
+
+    def __repr__(self):
+        desc_preview = ""
+        if self.description is not None:
+            desc_preview = self.description[:100].replace('\n', ' ').replace('\r', '')
+            if len(self.description) > 100:
+                desc_preview += "..."
+        return (
+            f"<Category(id={self.id}, name='{self.name}', "
+            f"description='{desc_preview}')>"
+        )
