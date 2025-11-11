@@ -9,4 +9,12 @@ wheels/
 # Virtual environments
 .venv
 
+# Database
 messages.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+*.cover

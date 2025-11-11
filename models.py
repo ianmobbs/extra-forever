@@ -18,7 +18,10 @@ class Message(Base):
     date = Column(DateTime, nullable=True)
 
     def __repr__(self):
+        body_preview = ""
+        if self.body is not None:
+            body_preview = self.body[:100].replace('\n', ' ').replace('\r', '') + "..."
         return (
             f"<Message(id={self.id}, subject='{self.subject}', sender='{self.sender}', "
-            f"to={self.to}, date='{self.date}', body_preview='{self.body[:100].replace('\n', ' ').replace('\r', '')}...'>"
+            f"to={self.to}, date='{self.date}', body_preview='{body_preview}')>"
         )

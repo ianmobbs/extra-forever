@@ -1,15 +1,12 @@
-import json
-import base64
-from datetime import datetime
 from pathlib import Path
 import typer
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.panel import Panel
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from models import Base, Message
+
+from app.controllers.messages_controller import MessagesController
+from app.services.messages_service import ImportOptions
 
 app = typer.Typer(
     name="extra",
@@ -59,64 +56,29 @@ def import_messages(
     """
     console.print(f"\n[bold cyan]Importing messages from:[/bold cyan] {filename}")
     
-    # Create SQLite database
-    engine = create_engine(SQLITE_DB_PATH, echo=False)
-    
     if drop_existing:
         console.print("[yellow]Dropping existing tables...[/yellow]")
-        Base.metadata.drop_all(engine)
-    
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    
-    messages = []
     
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        task = progress.add_task("Reading messages...", total=None)
+        task = progress.add_task("Processing messages...", total=None)
         
         try:
-            with open(filename, 'r') as f:
-                for line in f:
-                    data = json.loads(line)
-                    body_decoded = base64.b64decode(data['body']).decode('utf-8')
-                    date_obj = datetime.fromisoformat(data['date'].replace('Z', '+00:00'))
-                    
-                    message = Message(
-                        id=data['id'],
-                        subject=data['subject'],
-                        sender=data['from'],
-                        to=data['to'], 
-                        snippet=data['snippet'],
-                        body=body_decoded,
-                        date=date_obj
-                    )
-                    messages.append(message)
+            # Use controller to handle the import
+            controller = MessagesController(db_path=SQLITE_DB_PATH)
+            options = ImportOptions(drop_existing=drop_existing)
+            result = controller.import_messages(file_path=filename, options=options)
+            progress.update(task, description=f"Loaded {result.total_imported} messages")
         except Exception as e:
-            console.print(f"[bold red]Error reading file:[/bold red] {e}")
-            raise typer.Exit(code=1)
-        
-        progress.update(task, description=f"Loaded {len(messages)} messages")
-    
-    # Add all messages to database
-    with console.status("[bold green]Saving to database..."):
-        try:
-            session.add_all(messages)
-            session.commit()
-        except Exception as e:
-            console.print(f"[bold red]Error saving to database:[/bold red] {e}")
-            session.rollback()
+            console.print(f"[bold red]Error:[/bold red] {e}")
             raise typer.Exit(code=1)
     
-    console.print(f"\n[bold green]✓[/bold green] Successfully imported {len(messages)} messages\n")
+    console.print(f"\n[bold green]✓[/bold green] Successfully imported {result.total_imported} messages\n")
     
-    # Query and display first 5 messages
-    first_five = session.query(Message).limit(5).all()
-    
+    # Display preview
     console.print(Panel.fit(
         "[bold]Preview: First 5 messages[/bold]",
         border_style="cyan"
@@ -128,7 +90,7 @@ def import_messages(
     table.add_column("Date", style="yellow")
     table.add_column("Snippet", style="white", no_wrap=False, max_width=40)
     
-    for msg in first_five:
+    for msg in result.preview_messages:
         table.add_row(
             msg.subject[:50] + "..." if len(msg.subject) > 50 else msg.subject,
             msg.sender,
@@ -138,8 +100,6 @@ def import_messages(
     
     console.print(table)
     console.print()
-    
-    session.close()
 
 
 if __name__ == "__main__":
