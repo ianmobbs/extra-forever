@@ -22,7 +22,8 @@ class MessageManager:
         to: List[str],
         snippet: Optional[str] = None,
         body: Optional[str] = None,
-        date: Optional[datetime] = None
+        date: Optional[datetime] = None,
+        embedding: Optional[List[float]] = None
     ) -> Message:
         """Create a new message."""
         message = Message(
@@ -32,7 +33,8 @@ class MessageManager:
             to=to,
             snippet=snippet,
             body=body,
-            date=date
+            date=date,
+            embedding=embedding
         )
         self.session.add(message)
         try:
@@ -73,7 +75,8 @@ class MessageManager:
         to: Optional[List[str]] = None,
         snippet: Optional[str] = None,
         body: Optional[str] = None,
-        date: Optional[datetime] = None
+        date: Optional[datetime] = None,
+        embedding: Optional[List[float]] = None
     ) -> Optional[Message]:
         """Update a message by ID."""
         message = self.get_by_id(message_id)
@@ -92,6 +95,8 @@ class MessageManager:
             message.body = body
         if date is not None:
             message.date = date
+        if embedding is not None:
+            message.embedding = embedding
         
         self.session.commit()
         self.session.refresh(message)

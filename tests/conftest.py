@@ -6,12 +6,14 @@ import base64
 import tempfile
 from pathlib import Path
 from datetime import datetime
+from typing import List
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from models import Base, Message
+from models import Base, Message, Category
 from app.stores.sqlite_store import SQLiteStore
+from app.services.embedding_service import EmbeddingService
 
 
 @pytest.fixture
@@ -110,4 +112,26 @@ def sample_message():
         body="Test body content",
         date=datetime(2025, 1, 1, 12, 0, 0)
     )
+
+
+class MockEmbeddingService(EmbeddingService):
+    """Mock embedding service for testing that doesn't make API calls."""
+    
+    def __init__(self):
+        # Don't call parent __init__ to avoid creating OpenAI client
+        pass
+    
+    def embed_message(self, message: Message) -> List[float]:
+        """Return a fake embedding vector."""
+        return [0.1] * 1536  # text-embedding-ada-002 returns 1536 dimensions
+    
+    def embed_category(self, category: Category) -> List[float]:
+        """Return a fake embedding vector."""
+        return [0.2] * 1536  # text-embedding-ada-002 returns 1536 dimensions
+
+
+@pytest.fixture
+def mock_embedding_service():
+    """Provide a mock embedding service for testing."""
+    return MockEmbeddingService()
 

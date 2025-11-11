@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from models import Category
 from app.managers.category_manager import CategoryManager
 from app.stores.sqlite_store import SQLiteStore
+from app.services.embedding_service import EmbeddingService
 
 
 @dataclass
@@ -18,8 +19,9 @@ class CategoryResult:
 class CategoriesService:
     """Service for orchestrating category operations."""
     
-    def __init__(self, store: SQLiteStore):
+    def __init__(self, store: SQLiteStore, embedding_service: Optional[EmbeddingService] = None):
         self.store = store
+        self.embedding_service = embedding_service or EmbeddingService()
     
     def create_category(self, name: str, description: str) -> CategoryResult:
         """
@@ -32,10 +34,16 @@ class CategoriesService:
         Returns:
             CategoryResult with the created category
         """
+        # Create temporary category object for embedding
+        temp_category = Category(name=name, description=description)
+        
+        # Generate embedding
+        embedding = self.embedding_service.embed_category(temp_category)
+        
         session = self.store.create_session()
         try:
             manager = CategoryManager(session)
-            category = manager.create(name=name, description=description)
+            category = manager.create(name=name, description=description, embedding=embedding)
             return CategoryResult(category=category)
         finally:
             session.close()

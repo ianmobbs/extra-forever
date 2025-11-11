@@ -42,14 +42,14 @@ class TestImportResult:
 class TestMessagesService:
     """Test MessagesService class."""
     
-    def test_service_initialization(self, sqlite_store):
+    def test_service_initialization(self, sqlite_store, mock_embedding_service):
         """Test service can be initialized."""
-        service = MessagesService(sqlite_store)
+        service = MessagesService(sqlite_store, mock_embedding_service)
         assert service.store == sqlite_store
     
-    def test_import_from_jsonl(self, sqlite_store, sample_jsonl_file):
+    def test_import_from_jsonl(self, sqlite_store, sample_jsonl_file, mock_embedding_service):
         """Test importing messages from JSONL file."""
-        service = MessagesService(sqlite_store)
+        service = MessagesService(sqlite_store, mock_embedding_service)
         options = ImportOptions(drop_existing=True)
         
         result = service.import_from_jsonl(sample_jsonl_file, options)
@@ -57,10 +57,13 @@ class TestMessagesService:
         assert isinstance(result, ImportResult)
         assert result.total_imported == 3
         assert len(result.preview_messages) == 3
+        # Verify embeddings were added
+        assert result.preview_messages[0].embedding is not None
+        assert len(result.preview_messages[0].embedding) == 1536
     
-    def test_import_decodes_body(self, sqlite_store, sample_jsonl_file):
+    def test_import_decodes_body(self, sqlite_store, sample_jsonl_file, mock_embedding_service):
         """Test that body is decoded from base64."""
-        service = MessagesService(sqlite_store)
+        service = MessagesService(sqlite_store, mock_embedding_service)
         options = ImportOptions(drop_existing=True)
         
         result = service.import_from_jsonl(sample_jsonl_file, options)
@@ -68,9 +71,9 @@ class TestMessagesService:
         msg = result.preview_messages[0]
         assert msg.body == "First email body"
     
-    def test_import_with_drop_existing(self, sqlite_store, sample_jsonl_file):
+    def test_import_with_drop_existing(self, sqlite_store, sample_jsonl_file, mock_embedding_service):
         """Test import with drop_existing=True."""
-        service = MessagesService(sqlite_store)
+        service = MessagesService(sqlite_store, mock_embedding_service)
         
         # First import
         options = ImportOptions(drop_existing=True)
@@ -87,7 +90,7 @@ class TestMessagesService:
         assert count == 3
         session.close()
     
-    def test_import_without_drop_existing(self, sqlite_store, tmp_path):
+    def test_import_without_drop_existing(self, sqlite_store, tmp_path, mock_embedding_service):
         """Test import with drop_existing=False."""
         # Create two different JSONL files
         file1 = tmp_path / "messages1.jsonl"
@@ -119,7 +122,7 @@ class TestMessagesService:
         with open(file2, 'w') as f:
             f.write(json.dumps(msg2) + '\n')
         
-        service = MessagesService(sqlite_store)
+        service = MessagesService(sqlite_store, mock_embedding_service)
         
         # First import with drop
         options_drop = ImportOptions(drop_existing=True)

@@ -13,9 +13,9 @@ class CategoryManager:
     def __init__(self, session: Session):
         self.session = session
     
-    def create(self, name: str, description: str) -> Category:
+    def create(self, name: str, description: str, embedding: Optional[List[float]] = None) -> Category:
         """Create a new category."""
-        category = Category(name=name, description=description)
+        category = Category(name=name, description=description, embedding=embedding)
         self.session.add(category)
         try:
             self.session.commit()
@@ -37,7 +37,7 @@ class CategoryManager:
         """Get all categories."""
         return self.session.query(Category).all()
     
-    def update(self, category_id: int, name: Optional[str] = None, description: Optional[str] = None) -> Optional[Category]:
+    def update(self, category_id: int, name: Optional[str] = None, description: Optional[str] = None, embedding: Optional[List[float]] = None) -> Optional[Category]:
         """Update a category by ID."""
         category = self.get_by_id(category_id)
         if not category:
@@ -47,6 +47,8 @@ class CategoryManager:
             category.name = name
         if description is not None:
             category.description = description
+        if embedding is not None:
+            category.embedding = embedding
         
         try:
             self.session.commit()

@@ -16,6 +16,7 @@ class Message(Base):
     snippet = Column(String, nullable=True)
     body = Column(Text, nullable=True) 
     date = Column(DateTime, nullable=True)
+    embedding = Column(JSON, nullable=True)  # List[float] stored as JSON
 
     def __repr__(self):
         body_preview = ""
@@ -36,6 +37,7 @@ class Category(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False, unique=True)
     description = Column(Text, nullable=False)
+    embedding = Column(JSON, nullable=True)  # List[float] stored as JSON
 
     def __repr__(self):
         desc_preview = ""

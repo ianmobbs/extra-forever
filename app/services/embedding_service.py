@@ -1,0 +1,74 @@
+"""
+Embedding service for generating text embeddings using OpenAI API.
+"""
+from typing import List, Optional
+from openai import OpenAI
+
+from models import Message, Category
+
+
+class EmbeddingService:
+    """Service for generating embeddings using OpenAI's API."""
+    
+    def __init__(self, api_key: Optional[str] = None):
+        """
+        Initialize the embedding service.
+        
+        Args:
+            api_key: OpenAI API key (if None, will use OPENAI_API_KEY env var)
+        """
+        self.client = OpenAI(api_key=api_key) if api_key else OpenAI()
+        self.model = "text-embedding-ada-002"
+    
+    def embed_message(self, message: Message) -> List[float]:
+        """
+        Generate an embedding for a message.
+        
+        Combines subject, sender, snippet, and body into a single text for embedding.
+        
+        Args:
+            message: Message object to embed
+            
+        Returns:
+            List of floats representing the embedding vector
+        """
+        snippet = message.snippet or ""
+        body = (message.body or "")[:8000]  # Truncate body if too long (OpenAI has token limits)
+        text = f"Subject: {message.subject}\nFrom: {message.sender}\nSnippet: {snippet}\nBody: {body}"
+        return self._create_embedding(text)
+    
+    def embed_category(self, category: Category) -> List[float]:
+        """
+        Generate an embedding for a category.
+        
+        Combines name and description into a single text for embedding.
+        
+        Args:
+            category: Category object to embed
+            
+        Returns:
+            List of floats representing the embedding vector
+        """
+        # Combine name and description for embedding
+        text = f"Category: {category.name}\nDescription: {category.description}"
+        
+        return self._create_embedding(text)
+    
+    def _create_embedding(self, text: str) -> List[float]:
+        """
+        Create an embedding for the given text using OpenAI API.
+        
+        Args:
+            text: Text to embed
+            
+        Returns:
+            List of floats representing the embedding vector
+        """
+        response = self.client.embeddings.create(
+            model=self.model,
+            input=text,
+            encoding_format="float"
+        )
+        
+        return response.data[0].embedding
+

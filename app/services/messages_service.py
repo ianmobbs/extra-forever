@@ -11,6 +11,7 @@ from typing import List, Optional
 from models import Message
 from app.managers.message_manager import MessageManager
 from app.stores.sqlite_store import SQLiteStore
+from app.services.embedding_service import EmbeddingService
 
 
 @dataclass
@@ -35,8 +36,9 @@ class MessageResult:
 class MessagesService:
     """Service for orchestrating message import and processing operations."""
     
-    def __init__(self, store: SQLiteStore):
+    def __init__(self, store: SQLiteStore, embedding_service: Optional[EmbeddingService] = None):
         self.store = store
+        self.embedding_service = embedding_service or EmbeddingService()
     
     def import_from_jsonl(
         self,
@@ -98,6 +100,10 @@ class MessagesService:
                     body=body_decoded,
                     date=date_obj
                 )
+                
+                # Generate embedding for the message
+                message.embedding = self.embedding_service.embed_message(message)
+                
                 messages.append(message)
         
         return messages
@@ -127,6 +133,20 @@ class MessagesService:
         Returns:
             MessageResult with the created message
         """
+        # Create temporary message object for embedding
+        temp_message = Message(
+            id=id,
+            subject=subject,
+            sender=sender,
+            to=to,
+            snippet=snippet,
+            body=body,
+            date=date
+        )
+        
+        # Generate embedding
+        embedding = self.embedding_service.embed_message(temp_message)
+        
         session = self.store.create_session()
         try:
             manager = MessageManager(session)
@@ -137,7 +157,8 @@ class MessagesService:
                 to=to,
                 snippet=snippet,
                 body=body,
-                date=date
+                date=date,
+                embedding=embedding
             )
             return MessageResult(message=message)
         finally:

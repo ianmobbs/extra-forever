@@ -8,9 +8,9 @@ from app.services.categories_service import CategoriesService
 class TestCategoriesService:
     """Test CategoriesService class."""
     
-    def test_create_category(self, sqlite_store):
+    def test_create_category(self, sqlite_store, mock_embedding_service):
         """Test creating a category through service."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         result = service.create_category(
             name="Work Travel",
@@ -20,19 +20,22 @@ class TestCategoriesService:
         assert result.category.id is not None
         assert result.category.name == "Work Travel"
         assert result.category.description == "Work-related travel receipts from airlines"
+        # Verify embedding was added
+        assert result.category.embedding is not None
+        assert len(result.category.embedding) == 1536
     
-    def test_create_category_duplicate_raises_error(self, sqlite_store):
+    def test_create_category_duplicate_raises_error(self, sqlite_store, mock_embedding_service):
         """Test creating duplicate category raises error."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         service.create_category(name="Unique", description="First")
         
         with pytest.raises(ValueError):
             service.create_category(name="Unique", description="Second")
     
-    def test_get_category(self, sqlite_store):
+    def test_get_category(self, sqlite_store, mock_embedding_service):
         """Test retrieving category by ID."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         created = service.create_category(name="Test", description="Test category")
         
@@ -40,16 +43,16 @@ class TestCategoriesService:
         assert result is not None
         assert result.category.name == "Test"
     
-    def test_get_category_not_found(self, sqlite_store):
+    def test_get_category_not_found(self, sqlite_store, mock_embedding_service):
         """Test retrieving non-existent category returns None."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         result = service.get_category(9999)
         assert result is None
     
-    def test_get_category_by_name(self, sqlite_store):
+    def test_get_category_by_name(self, sqlite_store, mock_embedding_service):
         """Test retrieving category by name."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         service.create_category(name="FindMe", description="Test")
         
@@ -57,16 +60,16 @@ class TestCategoriesService:
         assert result is not None
         assert result.category.name == "FindMe"
     
-    def test_get_category_by_name_not_found(self, sqlite_store):
+    def test_get_category_by_name_not_found(self, sqlite_store, mock_embedding_service):
         """Test retrieving category by non-existent name returns None."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         result = service.get_category_by_name("NonExistent")
         assert result is None
     
-    def test_list_categories(self, sqlite_store):
+    def test_list_categories(self, sqlite_store, mock_embedding_service):
         """Test listing all categories."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         service.create_category(name="Cat1", description="First")
         service.create_category(name="Cat2", description="Second")
@@ -76,16 +79,16 @@ class TestCategoriesService:
         assert len(categories) == 3
         assert {cat.name for cat in categories} == {"Cat1", "Cat2", "Cat3"}
     
-    def test_list_categories_empty(self, sqlite_store):
+    def test_list_categories_empty(self, sqlite_store, mock_embedding_service):
         """Test listing categories when none exist."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         categories = service.list_categories()
         assert categories == []
     
-    def test_update_category(self, sqlite_store):
+    def test_update_category(self, sqlite_store, mock_embedding_service):
         """Test updating a category."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         created = service.create_category(name="OldName", description="Old description")
         
@@ -99,9 +102,9 @@ class TestCategoriesService:
         assert result.category.name == "NewName"
         assert result.category.description == "New description"
     
-    def test_update_category_partial(self, sqlite_store):
+    def test_update_category_partial(self, sqlite_store, mock_embedding_service):
         """Test updating only some fields."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         created = service.create_category(name="Name", description="Old description")
         
@@ -114,16 +117,16 @@ class TestCategoriesService:
         assert result.category.name == "Name"
         assert result.category.description == "New description"
     
-    def test_update_category_not_found(self, sqlite_store):
+    def test_update_category_not_found(self, sqlite_store, mock_embedding_service):
         """Test updating non-existent category returns None."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         result = service.update_category(9999, name="NewName")
         assert result is None
     
-    def test_delete_category(self, sqlite_store):
+    def test_delete_category(self, sqlite_store, mock_embedding_service):
         """Test deleting a category."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         created = service.create_category(name="ToDelete", description="Will be deleted")
         
@@ -134,9 +137,9 @@ class TestCategoriesService:
         result = service.get_category(created.category.id)
         assert result is None
     
-    def test_delete_category_not_found(self, sqlite_store):
+    def test_delete_category_not_found(self, sqlite_store, mock_embedding_service):
         """Test deleting non-existent category returns False."""
-        service = CategoriesService(sqlite_store)
+        service = CategoriesService(sqlite_store, mock_embedding_service)
         
         success = service.delete_category(9999)
         assert success is False
