@@ -4,6 +4,8 @@ Tests for app/controllers/categories_controller.py
 import pytest
 import tempfile
 from pathlib import Path
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from app.controllers.categories_controller import CategoriesController
 
 
@@ -81,4 +83,156 @@ class TestCategoriesController:
         # Verify deleted
         result = controller.get_category(created.category.id)
         assert result is None
+
+
+class TestCategoriesControllerAPI:
+    """Test CategoriesController API endpoints."""
+    
+    @pytest.fixture
+    def client(self):
+        """Create a test client with the controller router."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            db_path = f"sqlite:///{tmp.name}"
+            controller = CategoriesController(db_path=db_path)
+            app = FastAPI()
+            app.include_router(controller.router)
+            client = TestClient(app)
+            yield client
+            # Cleanup
+            Path(tmp.name).unlink(missing_ok=True)
+    
+    def test_create_category_api(self, client):
+        """Test POST /categories/ endpoint."""
+        response = client.post(
+            "/categories/",
+            json={"name": "API Test", "description": "Created via API"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "API Test"
+        assert data["description"] == "Created via API"
+        assert "id" in data
+    
+    def test_create_category_api_duplicate(self, client):
+        """Test POST /categories/ with duplicate name returns error."""
+        # Create first category
+        client.post(
+            "/categories/",
+            json={"name": "Duplicate", "description": "First"}
+        )
+        
+        # Try to create duplicate
+        response = client.post(
+            "/categories/",
+            json={"name": "Duplicate", "description": "Second"}
+        )
+        
+        assert response.status_code == 400
+        assert "already exists" in response.json()["detail"].lower()
+    
+    def test_list_categories_api(self, client):
+        """Test GET /categories/ endpoint."""
+        # Create some categories
+        client.post("/categories/", json={"name": "Cat1", "description": "First"})
+        client.post("/categories/", json={"name": "Cat2", "description": "Second"})
+        
+        response = client.get("/categories/")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["name"] in ["Cat1", "Cat2"]
+    
+    def test_get_category_api(self, client):
+        """Test GET /categories/{id} endpoint."""
+        # Create a category
+        create_response = client.post(
+            "/categories/",
+            json={"name": "GetMe", "description": "Test get"}
+        )
+        category_id = create_response.json()["id"]
+        
+        # Get the category
+        response = client.get(f"/categories/{category_id}")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["name"] == "GetMe"
+        assert data["description"] == "Test get"
+    
+    def test_get_category_api_not_found(self, client):
+        """Test GET /categories/{id} with non-existent ID."""
+        response = client.get("/categories/99999")
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+    
+    def test_update_category_api(self, client):
+        """Test PUT /categories/{id} endpoint."""
+        # Create a category
+        create_response = client.post(
+            "/categories/",
+            json={"name": "Original", "description": "Original description"}
+        )
+        category_id = create_response.json()["id"]
+        
+        # Update it
+        response = client.put(
+            f"/categories/{category_id}",
+            json={"name": "Updated", "description": "Updated description"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "Updated"
+        assert data["description"] == "Updated description"
+    
+    def test_update_category_api_not_found(self, client):
+        """Test PUT /categories/{id} with non-existent ID."""
+        response = client.put(
+            "/categories/99999",
+            json={"name": "Updated"}
+        )
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+    
+    def test_update_category_api_duplicate_name(self, client):
+        """Test PUT /categories/{id} with duplicate name returns error."""
+        # Create two categories
+        client.post("/categories/", json={"name": "Cat1", "description": "First"})
+        response2 = client.post("/categories/", json={"name": "Cat2", "description": "Second"})
+        cat2_id = response2.json()["id"]
+        
+        # Try to rename Cat2 to Cat1 (duplicate)
+        response = client.put(
+            f"/categories/{cat2_id}",
+            json={"name": "Cat1"}
+        )
+        
+        assert response.status_code == 400
+        assert "already exists" in response.json()["detail"].lower()
+    
+    def test_delete_category_api(self, client):
+        """Test DELETE /categories/{id} endpoint."""
+        # Create a category
+        create_response = client.post(
+            "/categories/",
+            json={"name": "DeleteMe", "description": "Will be deleted"}
+        )
+        category_id = create_response.json()["id"]
+        
+        # Delete it
+        response = client.delete(f"/categories/{category_id}")
+        assert response.status_code == 200
+        assert "deleted successfully" in response.json()["message"].lower()
+        
+        # Verify it's gone
+        get_response = client.get(f"/categories/{category_id}")
+        assert get_response.status_code == 404
+    
+    def test_delete_category_api_not_found(self, client):
+        """Test DELETE /categories/{id} with non-existent ID."""
+        response = client.delete("/categories/99999")
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 

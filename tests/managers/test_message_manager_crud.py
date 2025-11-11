@@ -187,6 +187,69 @@ class TestMessageManagerCRUD:
         result = manager.update("nonexistent", subject="New Subject")
         assert result is None
     
+    def test_update_body(self, db_session):
+        """Test updating message body."""
+        manager = MessageManager(db_session)
+        
+        message = manager.create(
+            id="body_test",
+            subject="Test",
+            sender="sender@example.com",
+            to=["recipient@example.com"],
+            body="Old body"
+        )
+        
+        updated = manager.update("body_test", body="New body")
+        assert updated is not None
+        assert updated.body == "New body"
+    
+    def test_update_date(self, db_session):
+        """Test updating message date."""
+        manager = MessageManager(db_session)
+        
+        old_date = datetime(2025, 1, 1, 12, 0, 0)
+        new_date = datetime(2025, 2, 1, 15, 30, 0)
+        
+        message = manager.create(
+            id="date_test",
+            subject="Test",
+            sender="sender@example.com",
+            to=["recipient@example.com"],
+            date=old_date
+        )
+        
+        updated = manager.update("date_test", date=new_date)
+        assert updated is not None
+        assert updated.date == new_date
+    
+    def test_update_all_optional_fields(self, db_session):
+        """Test updating snippet, body, and date together."""
+        manager = MessageManager(db_session)
+        
+        old_date = datetime(2025, 1, 1, 12, 0, 0)
+        new_date = datetime(2025, 3, 1, 10, 0, 0)
+        
+        message = manager.create(
+            id="all_fields_test",
+            subject="Test",
+            sender="sender@example.com",
+            to=["recipient@example.com"],
+            snippet="Old snippet",
+            body="Old body",
+            date=old_date
+        )
+        
+        updated = manager.update(
+            "all_fields_test",
+            snippet="New snippet",
+            body="New body",
+            date=new_date
+        )
+        assert updated is not None
+        assert updated.snippet == "New snippet"
+        assert updated.body == "New body"
+        assert updated.date == new_date
+    
     def test_delete(self, db_session):
         """Test deleting a message."""
         manager = MessageManager(db_session)
