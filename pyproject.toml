@@ -159,3 +159,8 @@ disable_error_code = ["arg-type"]
 module = "app.services.*"
 # Services work with SQLAlchemy models
 disable_error_code = ["assignment", "arg-type", "misc", "var-annotated"]
+
+[[tool.mypy.overrides]]
+module = "cli"
+# CLI works with SQLAlchemy models and controllers
+disable_error_code = ["arg-type", "assignment", "attr-defined"]

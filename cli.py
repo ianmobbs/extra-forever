@@ -173,6 +173,39 @@ def bootstrap_system(
         console.print(table)
         console.print()
 
+        # Show classification details if auto-classify was enabled
+        if auto_classify and result.preview_messages:
+            console.print(Panel.fit("[bold]Classification Details[/bold]", border_style="cyan"))
+
+            # Re-classify preview messages to get detailed explanations
+            controller = MessagesController(db_path=SQLITE_DB_PATH)
+            for msg in result.preview_messages[:3]:  # Show details for first 3 messages
+                if msg.categories:
+                    console.print(f"\n[bold cyan]Message:[/bold cyan] {msg.subject[:60]}")
+                    # Get classification details with explanations
+                    try:
+                        classification = controller.classify_message(
+                            msg.id, top_n=classification_top_n, threshold=classification_threshold
+                        )
+                        for cat, score, explanation in zip(
+                            classification.matched_categories,
+                            classification.scores,
+                            classification.explanations,
+                            strict=True,
+                        ):
+                            console.print(
+                                f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta] "
+                                f"(score: {score:.4f})"
+                            )
+                            console.print(f"    [dim]{explanation}[/dim]")
+                    except Exception:
+                        # Fallback to simple category listing if classification fails
+                        for cat in msg.categories:
+                            console.print(
+                                f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta]"
+                            )
+                    console.print()
+
 
 # ===== Messages Commands =====
 
@@ -281,6 +314,35 @@ def import_messages(
 
     console.print(table)
     console.print()
+
+    # Show classification details if auto-classify was enabled
+    if auto_classify and result.preview_messages:
+        console.print(Panel.fit("[bold]Classification Details[/bold]", border_style="cyan"))
+
+        for msg in result.preview_messages[:3]:  # Show details for first 3 messages
+            if msg.categories:
+                console.print(f"\n[bold cyan]Message:[/bold cyan] {msg.subject[:60]}")
+                # Get classification details with explanations
+                try:
+                    classification = controller.classify_message(
+                        msg.id, top_n=classification_top_n, threshold=classification_threshold
+                    )
+                    for cat, score, explanation in zip(
+                        classification.matched_categories,
+                        classification.scores,
+                        classification.explanations,
+                        strict=True,
+                    ):
+                        console.print(
+                            f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta] "
+                            f"(score: {score:.4f})"
+                        )
+                        console.print(f"    [dim]{explanation}[/dim]")
+                except Exception:
+                    # Fallback to simple category listing if classification fails
+                    for cat in msg.categories:
+                        console.print(f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta]")
+                console.print()
 
 
 @messages_app.command(name="list")
@@ -438,17 +500,19 @@ def classify_message(
 
         # Display matched categories
         table = Table(show_header=True, header_style="bold magenta", title="Matched Categories")
-        table.add_column("ID", style="cyan", justify="right")
-        table.add_column("Name", style="green")
+        table.add_column("Category", style="green")
         table.add_column("Score", style="yellow", justify="right")
-        table.add_column("Description", style="white", no_wrap=False)
+        table.add_column("In Category", style="cyan", justify="center")
+        table.add_column("Explanation", style="white", no_wrap=False)
 
-        for cat, score in zip(result.matched_categories, result.scores, strict=True):
+        for cat, score, explanation in zip(
+            result.matched_categories, result.scores, result.explanations, strict=True
+        ):
             table.add_row(
-                str(cat.id),
                 cat.name,
                 f"{score:.4f}",
-                cat.description[:60] + "..." if len(cat.description) > 60 else cat.description,
+                "✓",
+                explanation,
             )
 
         console.print(table)

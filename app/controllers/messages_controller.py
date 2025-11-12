@@ -70,21 +70,24 @@ class ImportResponse(BaseModel):
     preview: list[MessageResponse]
 
 
-class CategoryInClassification(BaseModel):
-    """Category info in classification response."""
+class CategoryClassification(BaseModel):
+    """Single category classification result."""
 
-    id: int
-    name: str
-    description: str
-    score: float
+    category_id: int
+    category_name: str
+    is_in_category: bool = True  # Always true for matched categories
+    explanation: str
 
 
 class ClassifyResponse(BaseModel):
-    """API response for classification operation."""
+    """
+    API response for classification operation.
+
+    Returns classification results for a single message across multiple categories.
+    """
 
     message_id: str
-    message_subject: str
-    matched_categories: list[CategoryInClassification]
+    classifications: list[CategoryClassification]
 
 
 def _message_to_response(msg) -> MessageResponse:
@@ -369,17 +372,21 @@ class MessagesController:
         try:
             result = self.classify_message(message_id, top_n=top_n, threshold=threshold)
 
-            matched = [
-                CategoryInClassification(
-                    id=cat.id, name=cat.name, description=cat.description, score=score
+            classifications = [
+                CategoryClassification(
+                    category_id=cat.id,
+                    category_name=cat.name,
+                    is_in_category=True,
+                    explanation=explanation,
                 )
-                for cat, score in zip(result.matched_categories, result.scores, strict=True)
+                for cat, explanation in zip(
+                    result.matched_categories, result.explanations, strict=True
+                )
             ]
 
             return ClassifyResponse(
                 message_id=result.message.id,
-                message_subject=result.message.subject,
-                matched_categories=matched,
+                classifications=classifications,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e

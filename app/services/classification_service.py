@@ -19,6 +19,7 @@ class ClassificationResult:
     message: Message
     matched_categories: list[Category]
     scores: list[float]  # Cosine similarity scores for each matched category
+    explanations: list[str]  # Plain-English explanations for each match
 
 
 class ClassificationService:
@@ -74,7 +75,9 @@ class ClassificationService:
             raise ValueError("No categories with embeddings found")
 
         # Compute cosine similarities
-        matched_categories, scores = self._compute_similarity(message, categories_with_embeddings)
+        matched_categories, scores, explanations = self._compute_similarity(
+            message, categories_with_embeddings
+        )
 
         # Assign the categories to the message
         # Extract category IDs from result
@@ -100,12 +103,15 @@ class ClassificationService:
             session.close()
 
         return ClassificationResult(
-            message=message, matched_categories=matched_categories, scores=scores
+            message=message,
+            matched_categories=matched_categories,
+            scores=scores,
+            explanations=explanations,
         )
 
     def _compute_similarity(
         self, message: Message, categories: list[Category]
-    ) -> tuple[list[Category], list[float]]:
+    ) -> tuple[list[Category], list[float], list[str]]:
         """
         Compute cosine similarity between message and categories.
 
@@ -114,7 +120,7 @@ class ClassificationService:
             categories: List of categories with embeddings
 
         Returns:
-            Tuple of (matched_categories, scores) sorted by score descending
+            Tuple of (matched_categories, scores, explanations) sorted by score descending
         """
         # Convert message embedding to numpy array
         message_vec = np.array(message.embedding)
@@ -137,10 +143,19 @@ class ClassificationService:
         # Filter by threshold and top_n
         matched_categories: list[Category] = []
         scores: list[float] = []
+        explanations: list[str] = []
 
         for idx in sorted_indices:
             if similarities[idx] >= self.threshold and len(matched_categories) < self.top_n:
-                matched_categories.append(categories[idx])
-                scores.append(float(similarities[idx]))
+                category = categories[idx]
+                score = float(similarities[idx])
+                matched_categories.append(category)
+                scores.append(score)
+                # Generate plain-English explanation
+                explanation = (
+                    f"Message {message.id} embeddings exceed {self.threshold:.2f} "
+                    f"similarity threshold for category '{category.name}' with score {score:.4f}"
+                )
+                explanations.append(explanation)
 
-        return matched_categories, scores
+        return matched_categories, scores, explanations

@@ -20,12 +20,18 @@ class TestClassificationResult:
         )
         category = Category(id=1, name="Work", description="Work emails")
 
-        result = ClassificationResult(message=message, matched_categories=[category], scores=[0.85])
+        result = ClassificationResult(
+            message=message,
+            matched_categories=[category],
+            scores=[0.85],
+            explanations=["Test explanation"],
+        )
 
         assert result.message.id == "msg1"
         assert len(result.matched_categories) == 1
         assert result.matched_categories[0].name == "Work"
         assert result.scores == [0.85]
+        assert result.explanations == ["Test explanation"]
 
 
 class TestClassificationService:
@@ -72,10 +78,15 @@ class TestClassificationService:
         assert result.message.id == "msg1"
         assert len(result.matched_categories) > 0
         assert len(result.scores) == len(result.matched_categories)
+        assert len(result.explanations) == len(result.matched_categories)
         # Scores should be between 0 and 1 (with small tolerance for floating point)
         for score in result.scores:
             assert score >= -0.01  # Allow small negative due to floating point
             assert score <= 1.01  # Allow slightly over 1 due to floating point
+        # Explanations should be non-empty strings
+        for explanation in result.explanations:
+            assert isinstance(explanation, str)
+            assert len(explanation) > 0
 
     def test_classify_message_not_found(self, sqlite_store):
         """Test classify with non-existent message."""
@@ -146,6 +157,7 @@ class TestClassificationService:
         # Should have no matches above threshold
         assert len(result.matched_categories) == 0
         assert len(result.scores) == 0
+        assert len(result.explanations) == 0
 
     def test_classify_message_respects_top_n(self, sqlite_store, db_session):
         """Test that classification respects top_n limit."""
@@ -179,6 +191,7 @@ class TestClassificationService:
         # Should only return 3 categories
         assert len(result.matched_categories) == 3
         assert len(result.scores) == 3
+        assert len(result.explanations) == 3
 
     def test_classify_message_scores_sorted_descending(self, sqlite_store, db_session):
         """Test that results are sorted by score in descending order."""
@@ -330,11 +343,13 @@ class TestClassificationService:
             id=1, name="Match", description="Should match", embedding=[1.0, 0.0, 0.0]
         )
 
-        matched_cats, scores = service._compute_similarity(message, [category])
+        matched_cats, scores, explanations = service._compute_similarity(message, [category])
 
         assert len(matched_cats) == 1
         assert len(scores) == 1
+        assert len(explanations) == 1
         assert scores[0] == pytest.approx(1.0, abs=0.01)
+        assert isinstance(explanations[0], str)
 
     def test_compute_similarity_orthogonal_vectors(self, sqlite_store):
         """Test _compute_similarity with orthogonal vectors (should be ~0)."""
@@ -353,9 +368,10 @@ class TestClassificationService:
             id=1, name="Orthogonal", description="Should be orthogonal", embedding=[0.0, 1.0, 0.0]
         )
 
-        matched_cats, scores = service._compute_similarity(message, [category])
+        matched_cats, scores, explanations = service._compute_similarity(message, [category])
 
         assert len(matched_cats) == 1
+        assert len(explanations) == 1
         assert scores[0] == pytest.approx(0.0, abs=0.01)
 
     def test_compute_similarity_opposite_vectors(self, sqlite_store):
@@ -375,9 +391,10 @@ class TestClassificationService:
             id=1, name="Opposite", description="Should be opposite", embedding=[-1.0, 0.0, 0.0]
         )
 
-        matched_cats, scores = service._compute_similarity(message, [category])
+        matched_cats, scores, explanations = service._compute_similarity(message, [category])
 
         assert len(matched_cats) == 1
+        assert len(explanations) == 1
         assert scores[0] == pytest.approx(-1.0, abs=0.01)
 
     def test_compute_similarity_multiple_categories(self, sqlite_store):
@@ -398,10 +415,11 @@ class TestClassificationService:
             Category(id=3, name="Cat3", description="Low similarity", embedding=[0.0, 1.0, 0.0]),
         ]
 
-        matched_cats, scores = service._compute_similarity(message, categories)
+        matched_cats, scores, explanations = service._compute_similarity(message, categories)
 
         assert len(matched_cats) == 3
         assert len(scores) == 3
+        assert len(explanations) == 3
         # Scores should be sorted descending
         assert scores[0] >= scores[1] >= scores[2]
         # First should be highest (identical vectors)
