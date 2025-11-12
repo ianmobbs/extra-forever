@@ -3,6 +3,7 @@ Pytest configuration and shared fixtures.
 """
 
 import base64
+import hashlib
 import json
 import tempfile
 from datetime import datetime
@@ -122,17 +123,23 @@ class MockEmbeddingService(EmbeddingService):
 
         self.rng = random.Random(42)  # Use a fixed seed for reproducibility
 
+    def _hash_string(self, text: str) -> int:
+        """Create a platform-independent hash from a string."""
+        # Use hashlib for consistent hashing across platforms
+        hash_bytes = hashlib.md5(text.encode("utf-8")).digest()
+        return int.from_bytes(hash_bytes[:4], byteorder="big")
+
     def embed_message(self, message: Message) -> list[float]:
         """Return a deterministic random embedding vector based on message content."""
         # Generate deterministic embeddings based on message ID
-        seed = hash(message.id) % (2**32) if message.id else 42
+        seed = self._hash_string(message.id) if message.id else 42
         rng = self.rng.__class__(seed)
         return [rng.uniform(-1.0, 1.0) for _ in range(1536)]
 
     def embed_category(self, category: Category) -> list[float]:
         """Return a deterministic random embedding vector based on category name."""
         # Generate deterministic embeddings based on category name
-        seed = hash(category.name) % (2**32) if category.name else 43
+        seed = self._hash_string(category.name) if category.name else 43
         rng = self.rng.__class__(seed)
         return [rng.uniform(-1.0, 1.0) for _ in range(1536)]
 
