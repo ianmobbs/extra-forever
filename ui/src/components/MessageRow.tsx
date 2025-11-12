@@ -1,16 +1,13 @@
 import { useState } from 'preact/hooks';
 import type { Message } from '../types';
-import { api } from '../api';
 
 type MessageRowProps = {
   message: Message;
   isLast: boolean;
-  onUpdate: (messageId: string) => void;
 };
 
-export function MessageRow({ message, isLast, onUpdate }: MessageRowProps) {
+export function MessageRow({ message, isLast }: MessageRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const [classifying, setClassifying] = useState(false);
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return '';
@@ -28,19 +25,6 @@ export function MessageRow({ message, isLast, onUpdate }: MessageRowProps) {
       return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     } else {
       return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    }
-  };
-
-  const handleClassify = async (e: Event) => {
-    e.stopPropagation();
-    setClassifying(true);
-    try {
-      await api.classifyMessage(message.id);
-      onUpdate(message.id);
-    } catch (error) {
-      console.error('Failed to classify message:', error);
-    } finally {
-      setClassifying(false);
     }
   };
 
@@ -172,24 +156,6 @@ export function MessageRow({ message, isLast, onUpdate }: MessageRowProps) {
                 </div>
               </div>
             )}
-
-            {/* Actions */}
-            <div class="pt-4 border-t border-gray-100 flex justify-end">
-              <button
-                onClick={handleClassify}
-                disabled={classifying}
-                class="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
-              >
-                {classifying ? (
-                  <>
-                    <span class="inline-block w-3 h-3 border-2 border-gray-300 border-t-gray-800 rounded-full animate-spin mr-2"></span>
-                    Classifying...
-                  </>
-                ) : (
-                  'Classify'
-                )}
-              </button>
-            </div>
           </div>
         </div>
       )}

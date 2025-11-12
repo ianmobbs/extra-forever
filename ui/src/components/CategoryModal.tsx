@@ -5,15 +5,9 @@ type CategoryModalProps = {
   category: Category;
   messages: Message[];
   onClose: () => void;
-  onMessageUpdate: (messageId: string) => void;
 };
 
-export function CategoryModal({
-  category,
-  messages,
-  onClose,
-  onMessageUpdate,
-}: CategoryModalProps) {
+export function CategoryModal({ category, messages, onClose }: CategoryModalProps) {
   return (
     <div
       class="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-8"
@@ -63,7 +57,6 @@ export function CategoryModal({
                   key={message.id}
                   message={message}
                   isLast={index === messages.length - 1}
-                  onUpdate={onMessageUpdate}
                 />
               ))}
             </div>

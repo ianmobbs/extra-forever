@@ -1,4 +1,4 @@
-import type { Message, Category, ClassifyResponse } from './types';
+import type { Message, Category } from './types';
 
 const API_BASE = '/api';
 
@@ -22,18 +22,6 @@ export const api = {
     return response.json();
   },
 
-  async classifyMessage(messageId: string, topN = 3, threshold = 0.5): Promise<ClassifyResponse> {
-    const response = await fetch(
-      `${API_BASE}/messages/${messageId}/classify?top_n=${topN}&threshold=${threshold}`,
-      { method: 'POST' },
-    );
-    if (!response.ok) {
-      throw new Error('Failed to classify message');
-    }
-
-    return response.json();
-  },
-
   // Categories endpoints
   async getCategories(): Promise<Category[]> {
     const response = await fetch(`${API_BASE}/categories`);
@@ -42,28 +30,6 @@ export const api = {
     }
 
     return response.json();
-  },
-
-  async createCategory(name: string, description: string): Promise<Category> {
-    const response = await fetch(`${API_BASE}/categories`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, description }),
-    });
-    if (!response.ok) {
-      throw new Error('Failed to create category');
-    }
-
-    return response.json();
-  },
-
-  async deleteCategory(id: number): Promise<void> {
-    const response = await fetch(`${API_BASE}/categories/${id}`, {
-      method: 'DELETE',
-    });
-    if (!response.ok) {
-      throw new Error('Failed to delete category');
-    }
   },
 
   // Health check

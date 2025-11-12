@@ -35,15 +35,6 @@ export function App() {
     setSelectedCategory(category);
   };
 
-  const handleMessageUpdate = async (messageId: string) => {
-    try {
-      const updatedMessage = await api.getMessage(messageId);
-      setMessages((prev) => prev.map((msg) => (msg.id === messageId ? updatedMessage : msg)));
-    } catch (error) {
-      console.error('Failed to reload message:', error);
-    }
-  };
-
   if (loading) {
     return (
       <div class="flex items-center justify-center min-h-screen bg-white">
@@ -101,7 +92,6 @@ export function App() {
                   key={message.id}
                   message={message}
                   isLast={index === messages.length - 1}
-                  onUpdate={handleMessageUpdate}
                 />
               ))}
             </div>
@@ -117,7 +107,6 @@ export function App() {
             msg.categories.some((cat) => cat.id === selectedCategory.id),
           )}
           onClose={() => setSelectedCategory(null)}
-          onMessageUpdate={handleMessageUpdate}
         />
       )}
 
