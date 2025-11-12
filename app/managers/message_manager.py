@@ -1,29 +1,31 @@
 """
 Message manager for CRUD operations on Message entities.
 """
-from typing import List, Optional
+
 from datetime import datetime
-from sqlalchemy.orm import Session, joinedload
+
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, joinedload
+
 from models import Message
 
 
 class MessageManager:
     """Manages CRUD operations for Message entities."""
-    
+
     def __init__(self, session: Session):
         self.session = session
-    
+
     def create(
         self,
         id: str,
         subject: str,
         sender: str,
-        to: List[str],
-        snippet: Optional[str] = None,
-        body: Optional[str] = None,
-        date: Optional[datetime] = None,
-        embedding: Optional[List[float]] = None
+        to: list[str],
+        snippet: str | None = None,
+        body: str | None = None,
+        date: datetime | None = None,
+        embedding: list[float] | None = None,
     ) -> Message:
         """Create a new message."""
         message = Message(
@@ -34,55 +36,69 @@ class MessageManager:
             snippet=snippet,
             body=body,
             date=date,
-            embedding=embedding
+            embedding=embedding,
         )
         self.session.add(message)
         try:
             self.session.commit()
             # Re-query with eager loading to ensure categories are loaded
-            return self.session.query(Message).options(joinedload(Message.categories)).filter(Message.id == id).first()
-        except IntegrityError:
+            return (
+                self.session.query(Message)
+                .options(joinedload(Message.categories))
+                .filter(Message.id == id)
+                .first()
+            )
+        except IntegrityError as e:
             self.session.rollback()
-            raise ValueError(f"Message with id '{id}' already exists")
-    
-    def bulk_create(self, messages: List[Message]) -> None:
+            raise ValueError(f"Message with id '{id}' already exists") from e
+
+    def bulk_create(self, messages: list[Message]) -> None:
         """Bulk insert messages into the database."""
         self.session.add_all(messages)
         self.session.commit()
-    
-    def get_by_id(self, message_id: str) -> Optional[Message]:
+
+    def get_by_id(self, message_id: str) -> Message | None:
         """Get a message by ID."""
-        return self.session.query(Message).options(joinedload(Message.categories)).filter(Message.id == message_id).first()
-    
-    def get_all(self, limit: Optional[int] = None, offset: Optional[int] = None) -> List[Message]:
+        return (
+            self.session.query(Message)
+            .options(joinedload(Message.categories))
+            .filter(Message.id == message_id)
+            .first()
+        )
+
+    def get_all(self, limit: int | None = None, offset: int | None = None) -> list[Message]:
         """Get all messages with optional pagination."""
-        query = self.session.query(Message).options(joinedload(Message.categories)).order_by(Message.date.desc().nullslast())
+        query = (
+            self.session.query(Message)
+            .options(joinedload(Message.categories))
+            .order_by(Message.date.desc().nullslast())
+        )
         if offset is not None:
             query = query.offset(offset)
         if limit is not None:
             query = query.limit(limit)
         return query.all()
-    
-    def get_first_n(self, n: int) -> List[Message]:
+
+    def get_first_n(self, n: int) -> list[Message]:
         """Retrieve first n messages from the database."""
         return self.session.query(Message).options(joinedload(Message.categories)).limit(n).all()
-    
+
     def update(
         self,
         message_id: str,
-        subject: Optional[str] = None,
-        sender: Optional[str] = None,
-        to: Optional[List[str]] = None,
-        snippet: Optional[str] = None,
-        body: Optional[str] = None,
-        date: Optional[datetime] = None,
-        embedding: Optional[List[float]] = None
-    ) -> Optional[Message]:
+        subject: str | None = None,
+        sender: str | None = None,
+        to: list[str] | None = None,
+        snippet: str | None = None,
+        body: str | None = None,
+        date: datetime | None = None,
+        embedding: list[float] | None = None,
+    ) -> Message | None:
         """Update a message by ID."""
         message = self.get_by_id(message_id)
         if not message:
             return None
-        
+
         if subject is not None:
             message.subject = subject
         if sender is not None:
@@ -97,22 +113,26 @@ class MessageManager:
             message.date = date
         if embedding is not None:
             message.embedding = embedding
-        
+
         self.session.commit()
         # Re-query with eager loading
-        return self.session.query(Message).options(joinedload(Message.categories)).filter(Message.id == message_id).first()
-    
+        return (
+            self.session.query(Message)
+            .options(joinedload(Message.categories))
+            .filter(Message.id == message_id)
+            .first()
+        )
+
     def delete(self, message_id: str) -> bool:
         """Delete a message by ID."""
         message = self.get_by_id(message_id)
         if not message:
             return False
-        
+
         self.session.delete(message)
         self.session.commit()
         return True
-    
+
     def count(self) -> int:
         """Count total messages in the database."""
         return self.session.query(Message).count()
-

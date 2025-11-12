@@ -1,45 +1,46 @@
 """
 Categories service for orchestrating category operations.
 """
-from typing import List, Optional
+
 from dataclasses import dataclass
 
-from models import Category
 from app.managers.category_manager import CategoryManager
-from app.stores.sqlite_store import SQLiteStore
 from app.services.embedding_service import EmbeddingService
+from app.stores.sqlite_store import SQLiteStore
+from models import Category
 
 
 @dataclass
 class CategoryResult:
     """Result of a category operation."""
+
     category: Category
 
 
 class CategoriesService:
     """Service for orchestrating category operations."""
-    
-    def __init__(self, store: SQLiteStore, embedding_service: Optional[EmbeddingService] = None):
+
+    def __init__(self, store: SQLiteStore, embedding_service: EmbeddingService | None = None):
         self.store = store
         self.embedding_service = embedding_service or EmbeddingService()
-    
+
     def create_category(self, name: str, description: str) -> CategoryResult:
         """
         Create a new category.
-        
+
         Args:
             name: Category name
             description: Natural-language description of the category
-            
+
         Returns:
             CategoryResult with the created category
         """
         # Create temporary category object for embedding
         temp_category = Category(name=name, description=description)
-        
+
         # Generate embedding
         embedding = self.embedding_service.embed_category(temp_category)
-        
+
         session = self.store.create_session()
         try:
             manager = CategoryManager(session)
@@ -47,14 +48,14 @@ class CategoriesService:
             return CategoryResult(category=category)
         finally:
             session.close()
-    
-    def get_category(self, category_id: int) -> Optional[CategoryResult]:
+
+    def get_category(self, category_id: int) -> CategoryResult | None:
         """
         Get a category by ID.
-        
+
         Args:
             category_id: Category ID
-            
+
         Returns:
             CategoryResult or None if not found
         """
@@ -67,14 +68,14 @@ class CategoriesService:
             return None
         finally:
             session.close()
-    
-    def get_category_by_name(self, name: str) -> Optional[CategoryResult]:
+
+    def get_category_by_name(self, name: str) -> CategoryResult | None:
         """
         Get a category by name.
-        
+
         Args:
             name: Category name
-            
+
         Returns:
             CategoryResult or None if not found
         """
@@ -87,11 +88,11 @@ class CategoriesService:
             return None
         finally:
             session.close()
-    
-    def list_categories(self) -> List[Category]:
+
+    def list_categories(self) -> list[Category]:
         """
         List all categories.
-        
+
         Returns:
             List of all categories
         """
@@ -101,21 +102,18 @@ class CategoriesService:
             return manager.get_all()
         finally:
             session.close()
-    
+
     def update_category(
-        self,
-        category_id: int,
-        name: Optional[str] = None,
-        description: Optional[str] = None
-    ) -> Optional[CategoryResult]:
+        self, category_id: int, name: str | None = None, description: str | None = None
+    ) -> CategoryResult | None:
         """
         Update a category.
-        
+
         Args:
             category_id: Category ID
             name: New name (optional)
             description: New description (optional)
-            
+
         Returns:
             CategoryResult or None if not found
         """
@@ -128,14 +126,14 @@ class CategoriesService:
             return None
         finally:
             session.close()
-    
+
     def delete_category(self, category_id: int) -> bool:
         """
         Delete a category.
-        
+
         Args:
             category_id: Category ID
-            
+
         Returns:
             True if deleted, False if not found
         """
@@ -145,4 +143,3 @@ class CategoriesService:
             return manager.delete(category_id)
         finally:
             session.close()
-

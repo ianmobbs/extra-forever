@@ -1,19 +1,18 @@
 """
 Pytest configuration and shared fixtures.
 """
-import json
-import base64
-import tempfile
-from pathlib import Path
-from datetime import datetime
-from typing import List
-import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from models import Base, Message, Category
-from app.stores.sqlite_store import SQLiteStore
+import base64
+import json
+import tempfile
+from datetime import datetime
+from pathlib import Path
+
+import pytest
+
 from app.services.embedding_service import EmbeddingService
+from app.stores.sqlite_store import SQLiteStore
+from models import Category, Message
 
 
 @pytest.fixture
@@ -51,8 +50,8 @@ def sample_message_data():
         "from": "Sender <sender@example.com>",
         "to": ["recipient@example.com"],
         "snippet": "This is a test",
-        "body": base64.b64encode(b"Test email body").decode('utf-8'),
-        "date": "2025-01-01T12:00:00Z"
+        "body": base64.b64encode(b"Test email body").decode("utf-8"),
+        "date": "2025-01-01T12:00:00Z",
     }
 
 
@@ -66,8 +65,8 @@ def sample_messages_data():
             "from": "Sender One <sender1@example.com>",
             "to": ["recipient@example.com"],
             "snippet": "First test",
-            "body": base64.b64encode(b"First email body").decode('utf-8'),
-            "date": "2025-01-01T12:00:00Z"
+            "body": base64.b64encode(b"First email body").decode("utf-8"),
+            "date": "2025-01-01T12:00:00Z",
         },
         {
             "id": "msg2",
@@ -75,8 +74,8 @@ def sample_messages_data():
             "from": "Sender Two <sender2@example.com>",
             "to": ["recipient@example.com"],
             "snippet": "Second test",
-            "body": base64.b64encode(b"Second email body").decode('utf-8'),
-            "date": "2025-01-02T12:00:00Z"
+            "body": base64.b64encode(b"Second email body").decode("utf-8"),
+            "date": "2025-01-02T12:00:00Z",
         },
         {
             "id": "msg3",
@@ -84,9 +83,9 @@ def sample_messages_data():
             "from": "sender3@example.com",
             "to": ["recipient@example.com"],
             "snippet": "Third test",
-            "body": base64.b64encode(b"Third email body").decode('utf-8'),
-            "date": "2025-01-03T12:00:00Z"
-        }
+            "body": base64.b64encode(b"Third email body").decode("utf-8"),
+            "date": "2025-01-03T12:00:00Z",
+        },
     ]
 
 
@@ -94,9 +93,9 @@ def sample_messages_data():
 def sample_jsonl_file(tmp_path, sample_messages_data):
     """Create a temporary JSONL file with sample messages."""
     file_path = tmp_path / "test_messages.jsonl"
-    with open(file_path, 'w') as f:
+    with open(file_path, "w") as f:
         for msg in sample_messages_data:
-            f.write(json.dumps(msg) + '\n')
+            f.write(json.dumps(msg) + "\n")
     return file_path
 
 
@@ -110,22 +109,22 @@ def sample_message():
         to=["recipient@example.com"],
         snippet="Test snippet",
         body="Test body content",
-        date=datetime(2025, 1, 1, 12, 0, 0)
+        date=datetime(2025, 1, 1, 12, 0, 0),
     )
 
 
 class MockEmbeddingService(EmbeddingService):
     """Mock embedding service for testing that doesn't make API calls."""
-    
+
     def __init__(self):
         # Don't call parent __init__ to avoid creating OpenAI client
         pass
-    
-    def embed_message(self, message: Message) -> List[float]:
+
+    def embed_message(self, message: Message) -> list[float]:
         """Return a fake embedding vector."""
         return [0.1] * 1536  # text-embedding-ada-002 returns 1536 dimensions
-    
-    def embed_category(self, category: Category) -> List[float]:
+
+    def embed_category(self, category: Category) -> list[float]:
         """Return a fake embedding vector."""
         return [0.2] * 1536  # text-embedding-ada-002 returns 1536 dimensions
 
@@ -134,4 +133,3 @@ class MockEmbeddingService(EmbeddingService):
 def mock_embedding_service():
     """Provide a mock embedding service for testing."""
     return MockEmbeddingService()
-

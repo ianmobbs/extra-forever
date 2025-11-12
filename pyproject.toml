@@ -21,6 +21,9 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.23.0",
     "httpx>=0.27.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+    "pre-commit>=4.0.0",
 ]
 
 [project.scripts]
@@ -61,3 +64,98 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
+
+[tool.ruff]
+# Set the target Python version
+target-version = "py312"
+line-length = 100
+
+# Enable auto-fix for all fixable rules
+fix = true
+
+[tool.ruff.lint]
+# Enable these rule sets
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "C4",    # flake8-comprehensions
+    "SIM",   # flake8-simplify
+    "RUF",   # Ruff-specific rules
+]
+
+# Never enforce these rules
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+# Allow autofix for all enabled rules
+fixable = ["ALL"]
+unfixable = []
+
+# Per-file ignore rules
+[tool.ruff.lint.per-file-ignores]
+"cli.py" = ["B008"]  # Allow typer.Option/Argument in defaults
+"app/controllers/*.py" = ["B008"]  # Allow FastAPI Form/File in defaults
+
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+# Indent with spaces
+indent-style = "space"
+# Use trailing commas
+skip-magic-trailing-comma = false
+# Auto-detect line endings
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false  # Start lenient, can be stricter later
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+warn_no_return = true
+warn_unreachable = false  # SQLAlchemy patterns can appear unreachable
+strict_equality = true
+show_error_codes = true
+
+# Allow dynamic typing for now
+ignore_missing_imports = true
+
+# SQLAlchemy plugin for better type checking
+plugins = ["sqlalchemy.ext.mypy.plugin"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+# Tests work with SQLAlchemy models
+disable_error_code = ["arg-type", "union-attr", "attr-defined", "assignment"]
+
+[[tool.mypy.overrides]]
+module = "models"
+# Models have complex SQLAlchemy patterns
+disable_error_code = ["misc", "valid-type"]
+
+[[tool.mypy.overrides]]
+module = "app.managers.*"
+# Managers work directly with SQLAlchemy models
+disable_error_code = ["assignment", "return-value", "arg-type"]
+
+[[tool.mypy.overrides]]
+module = "app.controllers.*"
+# Controllers work with SQLAlchemy models
+disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+module = "app.services.*"
+# Services work with SQLAlchemy models
+disable_error_code = ["assignment", "arg-type", "misc", "var-annotated"]
