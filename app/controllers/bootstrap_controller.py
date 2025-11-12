@@ -2,6 +2,7 @@
 Bootstrap controller for initializing the system with sample data (API only).
 """
 
+import logging
 import tempfile
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from app.config import config
 from app.deps import get_bootstrap_service
 from app.services.bootstrap_service import BootstrapService
 from app.services.messages_service import ClassificationOptions
+
+logger = logging.getLogger(__name__)
 
 
 class MessagePreview(BaseModel):
@@ -62,22 +65,29 @@ class BootstrapController:
         service: BootstrapService = Depends(get_bootstrap_service),
     ) -> BootstrapResponse:
         """Bootstrap the system with messages and categories via API."""
+        logger.info(
+            f"Bootstrap API called: drop_existing={drop_existing}, auto_classify={auto_classify}"
+        )
         messages_path = None
         categories_path = None
 
         try:
             # Save uploaded files temporarily
             if messages_file:
+                logger.info(f"Saving messages file: {messages_file.filename}")
                 with tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=".jsonl") as tmp:
                     content = await messages_file.read()
                     tmp.write(content)
                     messages_path = Path(tmp.name)
+                logger.debug(f"Messages saved to temporary path: {messages_path}")
 
             if categories_file:
+                logger.info(f"Saving categories file: {categories_file.filename}")
                 with tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=".jsonl") as tmp:
                     content = await categories_file.read()
                     tmp.write(content)
                     categories_path = Path(tmp.name)
+                logger.debug(f"Categories saved to temporary path: {categories_path}")
 
             classification_opts = ClassificationOptions(
                 auto_classify=auto_classify,
@@ -85,11 +95,17 @@ class BootstrapController:
                 threshold=classification_threshold,
             )
 
+            logger.info("Calling bootstrap service")
             result = service.bootstrap(
                 messages_file=messages_path,
                 categories_file=categories_path,
                 drop_existing=drop_existing,
                 classification_options=classification_opts,
+            )
+
+            logger.info(
+                f"Bootstrap completed: {result.total_categories} categories, "
+                f"{result.total_messages} messages, {result.total_classified} classified"
             )
 
             # Convert to API response
@@ -109,6 +125,8 @@ class BootstrapController:
         finally:
             # Clean up temp files
             if messages_path:
+                logger.debug(f"Cleaning up temporary messages file: {messages_path}")
                 messages_path.unlink(missing_ok=True)
             if categories_path:
+                logger.debug(f"Cleaning up temporary categories file: {categories_path}")
                 categories_path.unlink(missing_ok=True)

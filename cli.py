@@ -1,7 +1,9 @@
+import logging
 from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
@@ -19,6 +21,14 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+# Configure logging with Rich handler
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
+)
 
 # Initialize shared store (lazily)
 _store = SQLiteStore(db_path=config.DATABASE_URL, echo=config.DATABASE_ECHO)
@@ -143,6 +153,7 @@ def bootstrap_system(
     classification_threshold: float = typer.Option(
         0.5, "--threshold", "-t", help="Minimum similarity threshold for classification (0-1)"
     ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose debug logging"),
 ):
     """
     Bootstrap the system with sample messages and categories.
@@ -157,7 +168,13 @@ def bootstrap_system(
         extra bootstrap
         extra bootstrap --messages custom.jsonl --categories custom-cats.jsonl
         extra bootstrap --no-classify  # Skip auto-classification
+        extra bootstrap --verbose  # Show detailed logging
     """
+    # Set logging level based on verbose flag
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+        console.print("[dim]Debug logging enabled[/dim]\n")
+
     console.print("\n[bold cyan]Bootstrapping system...[/bold cyan]")
 
     if drop_existing:

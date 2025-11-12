@@ -1,47 +1,30 @@
-import { useState } from 'preact/hooks';
 import type { Category } from '../types';
-import { api } from '../api';
 
 type CategoryCardProps = {
   category: Category;
-  onDeleted: (categoryId: number) => void;
+  onClick: () => void;
 };
 
-export function CategoryCard({ category, onDeleted }: CategoryCardProps) {
-  const [deleting, setDeleting] = useState(false);
-
-  const handleDelete = async () => {
-    if (!confirm(`Are you sure you want to delete "${category.name}"?`)) {
-      return;
-    }
-
-    setDeleting(true);
-    try {
-      await api.deleteCategory(category.id);
-      onDeleted(category.id);
-    } catch (error) {
-      alert(
-        `Failed to delete category: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-      setDeleting(false);
-    }
-  };
-
+export function CategoryCard({ category, onClick }: CategoryCardProps) {
   return (
-    <div class="card bg-base-100 shadow-xl">
-      <div class="card-body">
-        <h2 class="card-title">{category.name}</h2>
-        <p class="text-sm opacity-70">{category.description}</p>
-        <div class="card-actions justify-end mt-2">
-          <button
-            class={`btn btn-sm btn-error ${deleting ? 'btn-disabled' : ''}`}
-            onClick={handleDelete}
-            disabled={deleting}
+    <button
+      onClick={onClick}
+      class="flex-shrink-0 w-80 group cursor-pointer text-left bg-white border border-gray-200 rounded-lg p-6 hover:border-gray-300 hover:shadow-sm transition-all"
+    >
+      <div class="flex flex-col h-full">
+        <h3 class="text-base font-medium text-gray-900 mb-2">{category.name}</h3>
+        <p class="text-sm text-gray-500 leading-relaxed flex-1">{category.description}</p>
+        <div class="flex justify-end mt-4">
+          <svg
+            class="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-colors"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
           >
-            {deleting ? 'Deleting...' : 'Delete'}
-          </button>
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
         </div>
       </div>
-    </div>
+    </button>
   );
 }

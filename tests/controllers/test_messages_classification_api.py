@@ -92,12 +92,15 @@ class TestMessageClassificationAPI:
         for classification in data["classifications"]:
             assert "category_id" in classification
             assert "category_name" in classification
+            assert "score" in classification
             assert "is_in_category" in classification
             assert "explanation" in classification
 
             # Verify field types and values
             assert isinstance(classification["category_id"], int)
             assert isinstance(classification["category_name"], str)
+            assert isinstance(classification["score"], int | float)
+            assert 0.0 <= classification["score"] <= 1.0
             assert classification["is_in_category"] is True
             assert isinstance(classification["explanation"], str)
             assert len(classification["explanation"]) > 0
@@ -137,9 +140,12 @@ class TestMessageClassificationAPI:
             classification = response_dict["classifications"][0]
             assert "category_id" in classification
             assert "category_name" in classification
+            assert "score" in classification
             assert "is_in_category" in classification
             assert "explanation" in classification
             assert classification["is_in_category"] is True
+            assert isinstance(classification["score"], int | float)
+            assert 0.0 <= classification["score"] <= 1.0
 
     def test_classify_message_api_no_matches(self, client):
         """Test classification API when no categories match above threshold."""
@@ -174,22 +180,26 @@ class TestLLMClassificationIntegration:
 
     def test_llm_classification_with_test_model(self, db_session):
         """Test LLM classification with FunctionModel (no real API calls)."""
-        # Create mock function that returns responses
-        responses = [
-            {
-                "is_in_category": True,
-                "explanation": "This email is about work travel based on the subject and sender",
-            },
-            {
-                "is_in_category": False,
-                "explanation": "This email is not related to personal matters",
-            },
-        ]
-        response_idx = [0]
 
+        # Create mock function that returns responses
         def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
-            response = responses[response_idx[0]]
-            response_idx[0] += 1
+            # Return multi-category response with indices
+            response = {
+                "matches": [
+                    {
+                        "category_index": 0,
+                        "is_in_category": True,
+                        "explanation": "This email is about work travel based on the subject and sender",
+                        "confidence": 0.95,
+                    },
+                    {
+                        "category_index": 1,
+                        "is_in_category": False,
+                        "explanation": "This email is not related to personal matters",
+                        "confidence": 0.1,
+                    },
+                ]
+            }
             return ModelResponse(parts=[TextPart(content=json.dumps(response))])
 
         function_model = FunctionModel(mock_model_func)
@@ -227,7 +237,7 @@ class TestLLMClassificationIntegration:
         # Verify results
         assert len(matches) == 1
         assert matches[0].category.name == "Work Travel"
-        assert matches[0].score == 1.0
+        assert matches[0].score == 0.95
         assert "work travel" in matches[0].explanation.lower()
 
     def test_llm_classification_service_integration(self, db_session):
@@ -235,18 +245,17 @@ class TestLLMClassificationIntegration:
 
         # Create function model
         def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
-            return ModelResponse(
-                parts=[
-                    TextPart(
-                        content=json.dumps(
-                            {
-                                "is_in_category": True,
-                                "explanation": "Flight receipt matches work travel category",
-                            }
-                        )
-                    )
+            response = {
+                "matches": [
+                    {
+                        "category_index": 0,
+                        "is_in_category": True,
+                        "explanation": "Flight receipt matches work travel category",
+                        "confidence": 0.92,
+                    }
                 ]
-            )
+            }
+            return ModelResponse(parts=[TextPart(content=json.dumps(response))])
 
         function_model = FunctionModel(mock_model_func)
 
@@ -274,22 +283,36 @@ class TestLLMClassificationIntegration:
         # Verify results
         assert len(matches) == 1
         assert matches[0].category.name == "Work Travel"
-        assert matches[0].score == 1.0
+        assert matches[0].score == 0.92
         assert "Flight receipt" in matches[0].explanation
 
     def test_llm_classification_multiple_categories(self, db_session):
         """Test LLM classification with multiple categories."""
-        # Create function model with responses for each category
-        responses = [
-            {"is_in_category": True, "explanation": "This is a work travel receipt"},
-            {"is_in_category": True, "explanation": "This is a receipt"},
-            {"is_in_category": False, "explanation": "Not a newsletter"},
-        ]
-        response_idx = [0]
 
+        # Create function model with multi-category response
         def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
-            response = responses[response_idx[0]]
-            response_idx[0] += 1
+            response = {
+                "matches": [
+                    {
+                        "category_index": 0,
+                        "is_in_category": True,
+                        "explanation": "This is a work travel receipt",
+                        "confidence": 0.93,
+                    },
+                    {
+                        "category_index": 1,
+                        "is_in_category": True,
+                        "explanation": "This is a receipt",
+                        "confidence": 0.88,
+                    },
+                    {
+                        "category_index": 2,
+                        "is_in_category": False,
+                        "explanation": "Not a newsletter",
+                        "confidence": 0.05,
+                    },
+                ]
+            }
             return ModelResponse(parts=[TextPart(content=json.dumps(response))])
 
         function_model = FunctionModel(mock_model_func)
@@ -319,21 +342,29 @@ class TestLLMClassificationIntegration:
         # Classify
         matches = strategy.classify(message=message, categories=categories, top_n=10, threshold=0.5)
 
-        # Verify results
+        # Verify results - should be sorted by confidence descending
         assert len(matches) == 2
         assert matches[0].category.name == "Work Travel"
+        assert matches[0].score == 0.93
         assert matches[1].category.name == "Receipts"
-        assert all(m.score == 1.0 for m in matches)
+        assert matches[1].score == 0.88
 
     def test_llm_classification_respects_top_n(self, db_session):
         """Test that LLM classification respects top_n parameter."""
-        # Create function model that matches all categories
-        responses = [{"is_in_category": True, "explanation": "This matches"} for _ in range(5)]
-        response_idx = [0]
 
+        # Create function model that matches all categories
         def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
-            response = responses[response_idx[0]]
-            response_idx[0] += 1
+            response = {
+                "matches": [
+                    {
+                        "category_index": i,
+                        "is_in_category": True,
+                        "explanation": f"Match {i}",
+                        "confidence": 0.9 - (i * 0.1),
+                    }
+                    for i in range(5)
+                ]
+            }
             return ModelResponse(parts=[TextPart(content=json.dumps(response))])
 
         function_model = FunctionModel(mock_model_func)
@@ -367,15 +398,17 @@ class TestLLMClassificationIntegration:
 
         # Create function model that doesn't match
         def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
-            return ModelResponse(
-                parts=[
-                    TextPart(
-                        content=json.dumps(
-                            {"is_in_category": False, "explanation": "Does not match this category"}
-                        )
-                    )
+            response = {
+                "matches": [
+                    {
+                        "category_index": 0,
+                        "is_in_category": False,
+                        "explanation": "Does not match this category",
+                        "confidence": 0.1,
+                    }
                 ]
-            )
+            }
+            return ModelResponse(parts=[TextPart(content=json.dumps(response))])
 
         function_model = FunctionModel(mock_model_func)
 

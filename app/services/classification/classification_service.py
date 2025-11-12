@@ -7,7 +7,10 @@ This service orchestrates the classification process:
 3. Persisting category assignments
 """
 
+import logging
+import time
 from dataclasses import dataclass
+from datetime import UTC
 
 from sqlalchemy.orm import Session
 
@@ -18,6 +21,8 @@ from app.services.classification.strategies import (
     EmbeddingSimilarityStrategy,
 )
 from models import Category, Message
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -72,13 +77,23 @@ class ClassificationService:
             ValueError: If message has no embedding
             ValueError: If no categories have embeddings
         """
+        start_time = time.time()
+        logger.debug(f"Classifying message {message.id} against {len(categories)} categories")
+
         if not message.embedding:
+            logger.warning(f"Message {message.id} has no embedding")
             raise ValueError(f"Message {message.id} has no embedding")
 
         # Filter to categories with embeddings
         categories_with_embeddings = [cat for cat in categories if cat.embedding]
         if not categories_with_embeddings:
+            logger.warning("No categories with embeddings found")
             raise ValueError("No categories with embeddings found")
+
+        if len(categories_with_embeddings) < len(categories):
+            logger.debug(
+                f"Filtered to {len(categories_with_embeddings)}/{len(categories)} categories with embeddings"
+            )
 
         # Run classification strategy (pure logic)
         matches = self.strategy.classify(
@@ -93,9 +108,22 @@ class ClassificationService:
         scores = [match.score for match in matches]
         explanations = [match.explanation for match in matches]
 
+        logger.debug(
+            f"Classification found {len(matched_categories)} matches in {time.time() - start_time:.3f}s"
+        )
+
         # Optionally persist assignments
         if assign:
-            self._assign_categories(message.id, [cat.id for cat in matched_categories])
+            logger.debug(f"Persisting {len(matched_categories)} category assignments")
+            self._assign_categories(
+                message.id,
+                [
+                    (cat.id, score, explanation)
+                    for cat, score, explanation in zip(
+                        matched_categories, scores, explanations, strict=True
+                    )
+                ],
+            )
 
         return ClassificationResult(
             message=message,
@@ -118,35 +146,54 @@ class ClassificationService:
         Raises:
             ValueError: If message not found
         """
+        logger.debug(f"Fetching message and categories for classification: {message_id}")
         message_manager = MessageManager(self.db_session)
         category_manager = CategoryManager(self.db_session)
 
         # Get the message
         message = message_manager.get_by_id(message_id)
         if not message:
+            logger.error(f"Message with ID {message_id} not found")
             raise ValueError(f"Message with ID {message_id} not found")
 
         # Get all categories
         categories = category_manager.get_all()
+        logger.debug(f"Found {len(categories)} categories for classification")
 
         # Classify using the main method
         return self.classify_message(message=message, categories=categories, assign=assign)
 
-    def _assign_categories(self, message_id: str, category_ids: list[int]) -> None:
+    def _assign_categories(
+        self, message_id: str, classifications: list[tuple[int, float, str]]
+    ) -> None:
         """
-        Persist category assignments to the database.
+        Persist category assignments with metadata to the database.
 
         Args:
             message_id: Message ID
-            category_ids: List of category IDs to assign
+            classifications: List of tuples (category_id, score, explanation)
         """
+        from datetime import datetime
+
+        from models import MessageCategory
+
         message_manager = MessageManager(self.db_session)
-        category_manager = CategoryManager(self.db_session)
 
         message = message_manager.get_by_id(message_id)
         if message:
-            # Get fresh category objects from this session
-            categories = [category_manager.get_by_id(cat_id) for cat_id in category_ids]
-            # Clear existing categories and assign new ones
-            message.categories = [cat for cat in categories if cat is not None]
+            # Clear existing message_categories associations
+            for mc in message.message_categories:
+                self.db_session.delete(mc)
+
+            # Create new associations with metadata
+            for category_id, score, explanation in classifications:
+                message_category = MessageCategory(
+                    message_id=message_id,
+                    category_id=category_id,
+                    score=score,
+                    explanation=explanation,
+                    classified_at=datetime.now(UTC),
+                )
+                self.db_session.add(message_category)
+
             self.db_session.commit()

@@ -4,6 +4,8 @@ Messages service for orchestrating message import and processing.
 
 from __future__ import annotations
 
+import logging
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,11 +18,18 @@ from sqlalchemy.orm import Session
 from app.managers.message_manager import MessageManager
 from app.services.embedding_service import EmbeddingService
 from app.stores.sqlite_store import SQLiteStore
-from app.utils.jsonl_parser import decode_base64_body, parse_iso_date
+from app.utils.jsonl_parser import (
+    decode_base64_body,
+    extract_text_from_html,
+    is_html,
+    parse_iso_date,
+)
 from models import Message
 
 if TYPE_CHECKING:
     from app.services.classification import ClassificationService
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -74,6 +83,32 @@ class MessagesService:
         self.classification_service = classification_service
         self.store = store  # Only needed for import_from_jsonl to call init_db
 
+    @staticmethod
+    def parse_message_content(content: str, is_base64_encoded: bool = False) -> str:
+        """
+        Parse and normalize message content.
+
+        This method centralizes all message content parsing:
+        1. Decodes base64 if needed
+        2. Extracts plain text from HTML if content contains HTML
+
+        Args:
+            content: The message content (may be base64-encoded or plain text)
+            is_base64_encoded: Whether the content is base64-encoded
+
+        Returns:
+            Normalized plain text content
+        """
+        # Step 1: Decode base64 if needed
+        if is_base64_encoded:
+            content = decode_base64_body(content)
+
+        # Step 2: Extract text from HTML if content is HTML
+        if content and is_html(content):
+            content = extract_text_from_html(content)
+
+        return content
+
     def import_from_jsonl(self, file_path: Path, options: ImportOptions) -> ImportResult:
         """
         Import messages from a JSONL file.
@@ -123,8 +158,8 @@ class MessagesService:
         from app.utils.jsonl_parser import parse_jsonl
 
         def parse_message(data: dict) -> Message:
-            # Decode body using utility function
-            body_decoded = decode_base64_body(data["body"])
+            # Parse and normalize message body (base64 decode + HTML text extraction)
+            body_content = self.parse_message_content(data["body"], is_base64_encoded=True)
 
             # Parse date using utility function
             date_obj = parse_iso_date(data["date"])
@@ -135,7 +170,7 @@ class MessagesService:
                 sender=data["from"],
                 to=data["to"],
                 snippet=data.get("snippet"),
-                body=body_decoded,
+                body=body_content,
                 date=date_obj,
             )
 
@@ -181,6 +216,7 @@ class MessagesService:
         snippet: str | None = None,
         body: str | None = None,
         date: datetime | None = None,
+        body_is_base64_encoded: bool = False,
     ) -> MessageResult:
         """
         Create a new message.
@@ -191,12 +227,20 @@ class MessagesService:
             sender: Sender email
             to: List of recipient emails
             snippet: Short preview text
-            body: Full message body
+            body: Full message body (may be base64-encoded, will be processed for HTML extraction)
             date: Message date
+            body_is_base64_encoded: Whether the body is base64-encoded
 
         Returns:
             MessageResult with the created message
         """
+        start_time = time.time()
+        logger.debug(f"Creating message: {id[:20]}... subject='{subject[:50]}...'")
+
+        # Parse and normalize body content (base64 decode + extract text from HTML if needed)
+        if body:
+            body = self.parse_message_content(body, is_base64_encoded=body_is_base64_encoded)
+
         # Create temporary message object for embedding
         temp_message = Message(
             id=id, subject=subject, sender=sender, to=to, snippet=snippet, body=body, date=date
@@ -219,12 +263,15 @@ class MessagesService:
             )
             self.db_session.commit()
             self.db_session.refresh(message)
+            logger.debug(f"Message created in {time.time() - start_time:.3f}s")
             return MessageResult(message=message)
         except IntegrityError as e:
             self.db_session.rollback()
+            logger.error(f"Message with id '{id}' already exists")
             raise ValueError(f"Message with id '{id}' already exists") from e
-        except Exception:
+        except Exception as e:
             self.db_session.rollback()
+            logger.error(f"Failed to create message {id}: {e}")
             raise
 
     def get_message(self, message_id: str) -> MessageResult | None:

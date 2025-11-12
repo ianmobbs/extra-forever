@@ -2,6 +2,8 @@
 Tests for app/services/classification/classification_service.py
 """
 
+from datetime import UTC
+
 import pytest
 
 from app.services.categories_service import CategoriesService
@@ -268,6 +270,62 @@ class TestClassificationService:
         finally:
             session.close()
 
+    def test_classify_and_assign_persists_metadata(
+        self, sqlite_store, mock_embedding_service, db_session
+    ):
+        """Test that classify_and_assign persists score, explanation, and timestamp."""
+        # Create message
+        messages_service = MessagesService(db_session, mock_embedding_service)
+        messages_service.create_message(
+            id="msg1",
+            subject="Important work project",
+            sender="boss@company.com",
+            to=["employee@company.com"],
+        )
+
+        # Create categories
+        categories_service = CategoriesService(db_session, mock_embedding_service)
+        categories_service.create_category(name="Work", description="Work-related emails")
+        categories_service.create_category(name="Personal", description="Personal emails")
+
+        # Classify and assign
+        service = ClassificationService(db_session, top_n=2, threshold=0.0)
+        result = service.classify_message_by_id("msg1")
+
+        # Verify result has metadata
+        assert len(result.matched_categories) > 0
+        assert len(result.scores) == len(result.matched_categories)
+        assert len(result.explanations) == len(result.matched_categories)
+
+        # Verify metadata was persisted
+        from app.managers.message_manager import MessageManager
+
+        session = sqlite_store.create_session()
+        try:
+            manager = MessageManager(session)
+            message = manager.get_by_id("msg1")
+
+            # Check that each message_category association has metadata
+            assert len(message.message_categories) > 0
+            for mc in message.message_categories:
+                # Score should be between 0 and 1
+                assert mc.score is not None
+                assert 0.0 <= mc.score <= 1.0
+
+                # Explanation should be a non-empty string
+                assert mc.explanation is not None
+                assert isinstance(mc.explanation, str)
+                assert len(mc.explanation) > 0
+
+                # Classified_at should be set
+                assert mc.classified_at is not None
+
+                # Category should be accessible
+                assert mc.category is not None
+                assert mc.category.name in ["Work", "Personal"]
+        finally:
+            session.close()
+
     def test_classify_and_assign_clears_previous_assignments(
         self, sqlite_store, mock_embedding_service, db_session
     ):
@@ -287,16 +345,24 @@ class TestClassificationService:
         cat1_id = cat1.category.id
 
         # Manually assign category1 to message
-        from app.managers.category_manager import CategoryManager
+        from datetime import datetime
+
         from app.managers.message_manager import MessageManager
+        from models import MessageCategory
 
         session = sqlite_store.create_session()
         try:
             message_manager = MessageManager(session)
-            category_manager = CategoryManager(session)
             message = message_manager.get_by_id("msg1")
-            category = category_manager.get_by_id(cat1_id)
-            message.categories = [category]
+            # Create a MessageCategory association with dummy metadata
+            mc = MessageCategory(
+                message_id=message.id,
+                category_id=cat1_id,
+                score=0.5,
+                explanation="Manual assignment for testing",
+                classified_at=datetime.now(UTC),
+            )
+            session.add(mc)
             session.commit()
         finally:
             session.close()

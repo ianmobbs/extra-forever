@@ -2,11 +2,14 @@
 Message manager for CRUD operations on Message entities.
 """
 
+import logging
 from datetime import datetime
 
 from sqlalchemy.orm import Session, joinedload
 
 from models import Message
+
+logger = logging.getLogger(__name__)
 
 
 class MessageManager:
@@ -27,6 +30,7 @@ class MessageManager:
         embedding: list[float] | None = None,
     ) -> Message:
         """Create a new message."""
+        logger.debug(f"MessageManager: Creating message '{id[:30]}...'")
         message = Message(
             id=id,
             subject=subject,
@@ -39,33 +43,43 @@ class MessageManager:
         )
         self.session.add(message)
         self.session.flush()  # Flush to catch IntegrityError before commit
-        # Re-query with eager loading to ensure categories are loaded
+        logger.debug(f"MessageManager: Message '{id[:30]}...' created")
+        # Re-query with eager loading to ensure message_categories are loaded
+        from models import MessageCategory
+
         return (
             self.session.query(Message)
-            .options(joinedload(Message.categories))
+            .options(joinedload(Message.message_categories).joinedload(MessageCategory.category))
             .filter(Message.id == id)
             .first()
         )
 
     def bulk_create(self, messages: list[Message]) -> None:
         """Bulk insert messages into the database."""
+        logger.debug(f"MessageManager: Bulk creating {len(messages)} messages")
         self.session.add_all(messages)
         self.session.flush()  # Flush to ensure messages are staged
+        logger.debug(f"MessageManager: Bulk creation of {len(messages)} messages completed")
 
     def get_by_id(self, message_id: str) -> Message | None:
         """Get a message by ID."""
+        logger.debug(f"MessageManager: Retrieving message '{message_id[:30]}...'")
+        from models import MessageCategory
+
         return (
             self.session.query(Message)
-            .options(joinedload(Message.categories))
+            .options(joinedload(Message.message_categories).joinedload(MessageCategory.category))
             .filter(Message.id == message_id)
             .first()
         )
 
     def get_all(self, limit: int | None = None, offset: int | None = None) -> list[Message]:
         """Get all messages with optional pagination."""
+        from models import MessageCategory
+
         query = (
             self.session.query(Message)
-            .options(joinedload(Message.categories))
+            .options(joinedload(Message.message_categories).joinedload(MessageCategory.category))
             .order_by(Message.date.desc().nullslast())
         )
         if offset is not None:
@@ -76,7 +90,14 @@ class MessageManager:
 
     def get_first_n(self, n: int) -> list[Message]:
         """Retrieve first n messages from the database."""
-        return self.session.query(Message).options(joinedload(Message.categories)).limit(n).all()
+        from models import MessageCategory
+
+        return (
+            self.session.query(Message)
+            .options(joinedload(Message.message_categories).joinedload(MessageCategory.category))
+            .limit(n)
+            .all()
+        )
 
     def update(
         self,
@@ -111,9 +132,11 @@ class MessageManager:
 
         self.session.flush()  # Flush to ensure updates are staged
         # Re-query with eager loading
+        from models import MessageCategory
+
         return (
             self.session.query(Message)
-            .options(joinedload(Message.categories))
+            .options(joinedload(Message.message_categories).joinedload(MessageCategory.category))
             .filter(Message.id == message_id)
             .first()
         )

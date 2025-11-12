@@ -1,4 +1,6 @@
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Table, Text
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -8,15 +10,25 @@ class Base(DeclarativeBase):
     pass
 
 
-# Many-to-many association table for messages and categories
-message_categories = Table(
-    "message_categories",
-    Base.metadata,
-    Column("message_id", String, ForeignKey("messages.id", ondelete="CASCADE"), primary_key=True),
-    Column(
-        "category_id", Integer, ForeignKey("categories.id", ondelete="CASCADE"), primary_key=True
-    ),
-)
+class MessageCategory(Base):
+    """
+    Association object for message-category relationships with classification metadata.
+
+    This stores additional information about each classification beyond just the relationship,
+    including the confidence score, explanation, and timestamp.
+    """
+
+    __tablename__ = "message_categories"
+
+    message_id = Column(String, ForeignKey("messages.id", ondelete="CASCADE"), primary_key=True)
+    category_id = Column(Integer, ForeignKey("categories.id", ondelete="CASCADE"), primary_key=True)
+    score = Column(Float, nullable=False)  # Classification confidence score (0-1)
+    explanation = Column(Text, nullable=False)  # Human-readable explanation
+    classified_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC))  # Timestamp
+
+    # Relationships to parent objects
+    message = relationship("Message", back_populates="message_categories")
+    category = relationship("Category", back_populates="category_messages")
 
 
 class Message(Base):
@@ -35,8 +47,16 @@ class Message(Base):
     date = Column(DateTime, nullable=True)
     embedding = Column(JSON, nullable=True)  # List[float] stored as JSON
 
-    # Many-to-many relationship with categories
-    categories = relationship("Category", secondary=message_categories, back_populates="messages")
+    # Relationship to association objects
+    message_categories = relationship(
+        "MessageCategory", back_populates="message", cascade="all, delete-orphan"
+    )
+
+    # Convenience property for accessing categories directly
+    @property
+    def categories(self) -> list["Category"]:
+        """Get list of categories for this message."""
+        return [mc.category for mc in self.message_categories]
 
     def __repr__(self):
         body_preview = ""
@@ -60,8 +80,16 @@ class Category(Base):
     description = Column(Text, nullable=False)
     embedding = Column(JSON, nullable=True)  # List[float] stored as JSON
 
-    # Many-to-many relationship with messages
-    messages = relationship("Message", secondary=message_categories, back_populates="categories")
+    # Relationship to association objects
+    category_messages = relationship(
+        "MessageCategory", back_populates="category", cascade="all, delete-orphan"
+    )
+
+    # Convenience property for accessing messages directly
+    @property
+    def messages(self) -> list["Message"]:
+        """Get list of messages for this category."""
+        return [cm.message for cm in self.category_messages]
 
     def __repr__(self):
         desc_preview = ""

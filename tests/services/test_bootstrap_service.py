@@ -111,18 +111,26 @@ class TestBootstrapService:
 
         # Create a mock function that always returns True for classification
         def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
-            return ModelResponse(
-                parts=[
-                    TextPart(
-                        content=json.dumps(
-                            {
-                                "is_in_category": True,
-                                "explanation": "This message matches the category",
-                            }
-                        )
-                    )
+            # Parse the prompt to determine how many categories there are
+            # Count the number of category indices in the prompt
+            prompt_content = str(messages[0].parts[0].content) if messages else ""
+            num_categories = (
+                prompt_content.count("[") - 1
+            )  # Subtract 1 for the bracket in the instruction text
+
+            # Generate a match for each category
+            response = {
+                "matches": [
+                    {
+                        "category_index": i,
+                        "is_in_category": True,
+                        "explanation": f"This message matches category {i}",
+                        "confidence": 0.9,
+                    }
+                    for i in range(max(1, num_categories))  # Ensure at least 1 category
                 ]
-            )
+            }
+            return ModelResponse(parts=[TextPart(content=json.dumps(response))])
 
         function_model = FunctionModel(mock_model_func)
 

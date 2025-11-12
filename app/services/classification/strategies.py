@@ -111,26 +111,34 @@ class EmbeddingSimilarityStrategy(ClassificationStrategy):
 
 
 class CategoryMatchOutput(BaseModel):
-    """Output schema for LLM classification of a message against a category."""
+    """Output schema for LLM classification of a single category."""
 
+    category_index: int  # 0-based index of the category in the provided list
     is_in_category: bool
     explanation: str
+    confidence: float  # 0.0 to 1.0 confidence score
+
+
+class MultiCategoryMatchOutput(BaseModel):
+    """Output schema for LLM classification of multiple categories at once."""
+
+    matches: list[CategoryMatchOutput]
 
 
 class LLMClassificationStrategy(ClassificationStrategy):
     """
     Classification strategy using an LLM (Language Model) via pydantic-ai.
 
-    This strategy sends the message content and category description to an LLM
-    and asks it to determine if the message belongs in that category.
+    This strategy sends the message content and all category descriptions to an LLM
+    and asks it to determine which categories the message belongs to in a single request.
 
     Unlike embedding-based strategies, this provides:
     - Deep semantic understanding of message content
     - Natural language explanations for classification decisions
     - Ability to reason about context and intent
 
-    Note: This strategy is slower and more expensive than embedding-based approaches
-    since it requires an LLM API call for each message-category pair.
+    Optimization: Makes O(M) requests instead of O(M*N) by evaluating all categories
+    for a message in a single LLM call.
     """
 
     def __init__(self, model: str = "openai:gpt-4o-mini"):
@@ -143,12 +151,14 @@ class LLMClassificationStrategy(ClassificationStrategy):
         self.model = model
         self._agent = Agent(
             model=self.model,
-            output_type=CategoryMatchOutput,
+            output_type=MultiCategoryMatchOutput,
             instructions=(
                 "You are an email classification assistant. "
-                "Given an email message and a category description, determine if the email "
-                "belongs in that category. Be precise and consider the semantic meaning "
-                "of both the category description and the email content."
+                "Given an email message and a list of category descriptions, determine which "
+                "categories the email belongs in. For each category, provide a boolean match, "
+                "a confidence score (0.0 to 1.0), and an explanation. Be precise and consider "
+                "the semantic meaning of both the category descriptions and the email content. "
+                "You must evaluate ALL categories provided and return a match result for each one."
             ),
         )
 
@@ -158,22 +168,23 @@ class LLMClassificationStrategy(ClassificationStrategy):
         """
         Classify using an LLM to determine category membership.
 
-        For each category, the LLM evaluates whether the message belongs in it.
-        Matched categories receive a score of 1.0, non-matches receive 0.0.
+        The LLM evaluates all categories in a single request, returning matches with
+        confidence scores and explanations.
 
         Args:
             message: Message to classify (doesn't require embedding)
             categories: List of categories to match against
             top_n: Maximum number of matches to return
-            threshold: Minimum score (0-1) - typically 0.5 or 1.0 for LLM classification
+            threshold: Minimum confidence score (0-1) to include a match
 
         Returns:
-            List of ClassificationMatch objects for categories the LLM matched
+            List of ClassificationMatch objects for categories the LLM matched,
+            sorted by confidence score in descending order
 
         Note:
-            - This method makes synchronous LLM calls for each category
-            - The threshold parameter is respected but LLM scoring is binary (0.0 or 1.0)
-            - Set threshold <= 0.5 to require matches, > 0.5 for stricter matching
+            - This method makes a single LLM call to evaluate all categories (O(M) instead of O(M*N))
+            - The confidence scores from the LLM are used directly as scores
+            - Only matches with is_in_category=True and confidence >= threshold are returned
         """
         if not categories:
             return []
@@ -181,33 +192,36 @@ class LLMClassificationStrategy(ClassificationStrategy):
         # Build a rich text representation of the message
         message_text = self._build_message_text(message)
 
+        # Build the prompt with all categories
+        prompt = self._build_multi_category_prompt(message_text, categories)
+
+        # Call the LLM agent once with all categories
+        result = self._agent.run_sync(prompt)
+        output: MultiCategoryMatchOutput = result.output
+
+        # Process all matches from the LLM
         matches: list[ClassificationMatch] = []
-
-        # Evaluate each category until we have enough matches
-        for category in categories:
-            # Stop early if we have enough matches
-            if len(matches) >= top_n:
-                break
-
-            # Build the prompt for this category
-            prompt = self._build_classification_prompt(message_text, category)
-
-            # Call the LLM agent
-            result = self._agent.run_sync(prompt)
-            output: CategoryMatchOutput = result.output
-
-            # If the LLM says it's a match, add it to results
-            if output.is_in_category:
-                score = 1.0
-                # Only include if it meets the threshold
-                if score >= threshold:
-                    matches.append(
-                        ClassificationMatch(
-                            category=category, score=score, explanation=output.explanation
-                        )
+        for match_output in output.matches:
+            # Only include if the LLM says it's a match, meets threshold, and has valid index
+            if (
+                match_output.is_in_category
+                and match_output.confidence >= threshold
+                and 0 <= match_output.category_index < len(categories)
+            ):
+                category = categories[match_output.category_index]
+                matches.append(
+                    ClassificationMatch(
+                        category=category,
+                        score=match_output.confidence,
+                        explanation=match_output.explanation,
                     )
+                )
 
-        return matches
+        # Sort by confidence score descending
+        matches.sort(key=lambda m: m.score, reverse=True)
+
+        # Return top_n matches
+        return matches[:top_n]
 
     def _build_message_text(self, message: Message) -> str:
         """
@@ -247,25 +261,41 @@ class LLMClassificationStrategy(ClassificationStrategy):
 
         return "\n".join(parts)
 
-    def _build_classification_prompt(self, message_text: str, category: Category) -> str:
+    def _build_multi_category_prompt(self, message_text: str, categories: list[Category]) -> str:
         """
-        Build the prompt for classifying a message against a category.
+        Build the prompt for classifying a message against multiple categories.
 
         Args:
             message_text: Formatted message text
-            category: Category to evaluate
+            categories: List of categories to evaluate
 
         Returns:
             Prompt string for the LLM
         """
-        return f"""
-I need you to determine if the following email belongs in this category:
+        # Build the categories list with 0-based indices
+        categories_text = []
+        for i, category in enumerate(categories):
+            categories_text.append(f"[{i}] {category.name}")
+            categories_text.append(f"    Description: {category.description}")
 
-Category: {category.name}
-Description: {category.description}
+        categories_str = "\n".join(categories_text)
+
+        return f"""
+I need you to determine which of the following categories this email belongs to.
+Evaluate EACH category and provide a match result for ALL of them.
+
+Categories (with 0-based indices):
+{categories_str}
 
 Email:
 {message_text}
 
-Does this email belong in the "{category.name}" category?
+For each category, determine:
+1. The category_index (0-based index from the list above, e.g., 0, 1, 2, etc.)
+2. Whether the email belongs in that category (is_in_category: true/false)
+3. Your confidence in that determination (confidence: 0.0 to 1.0)
+4. A brief explanation of your reasoning
+
+IMPORTANT: Use the numeric index (0, 1, 2, etc.) for category_index, NOT the category name.
+Evaluate ALL {len(categories)} categories listed above.
 """

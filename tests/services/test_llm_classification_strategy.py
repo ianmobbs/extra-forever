@@ -100,22 +100,38 @@ class TestLLMClassificationStrategy:
         assert "(truncated)" in text
         assert len(text) < len(long_body)
 
-    def test_build_classification_prompt(self):
-        """Test building classification prompt."""
+    def test_build_multi_category_prompt(self):
+        """Test building multi-category classification prompt."""
         strategy = LLMClassificationStrategy()
-        category = Category(
-            id=1,
-            name="Work Emails",
-            description="Emails related to work and professional activities",
-        )
+        categories = [
+            Category(
+                id=1,
+                name="Work Emails",
+                description="Emails related to work and professional activities",
+            ),
+            Category(
+                id=2,
+                name="Personal",
+                description="Personal emails from friends and family",
+            ),
+        ]
         message_text = "Subject: Project Update\nFrom: boss@company.com"
 
-        prompt = strategy._build_classification_prompt(message_text, category)
+        prompt = strategy._build_multi_category_prompt(message_text, categories)
 
+        # Should contain category information with indices
+        assert "[0]" in prompt
+        assert "[1]" in prompt
         assert "Work Emails" in prompt
+        assert "Personal" in prompt
         assert "Emails related to work and professional activities" in prompt
+        assert "Personal emails from friends and family" in prompt
+        # Should contain message text
         assert "Subject: Project Update" in prompt
         assert "From: boss@company.com" in prompt
+        # Should instruct to use numeric indices
+        assert "category_index" in prompt
+        assert "0-based" in prompt.lower()
 
     def test_classify_no_categories(self):
         """Test classify with empty category list."""
@@ -130,16 +146,22 @@ class TestLLMClassificationStrategy:
 
     def test_classify_with_match(self):
         """Test classify when LLM indicates a match."""
-        # Create a mock function that returns a match
-        responses = [{"is_in_category": True, "explanation": "This is a work email"}]
-        response_idx = [0]
 
+        # Create a mock function that returns a match
         def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
-            response = responses[response_idx[0]]
-            response_idx[0] += 1
             # Return the structured output as text content
             import json
 
+            response = {
+                "matches": [
+                    {
+                        "category_index": 0,
+                        "is_in_category": True,
+                        "explanation": "This is a work email",
+                        "confidence": 0.95,
+                    }
+                ]
+            }
             return ModelResponse(parts=[TextPart(content=json.dumps(response))])
 
         function_model = FunctionModel(mock_model_func)
@@ -166,7 +188,7 @@ class TestLLMClassificationStrategy:
         assert len(matches) == 1
         assert matches[0].category.id == 1
         assert matches[0].category.name == "Work"
-        assert matches[0].score == 1.0
+        assert matches[0].score == 0.95
         assert matches[0].explanation == "This is a work email"
 
     def test_classify_with_no_match(self):
@@ -174,15 +196,17 @@ class TestLLMClassificationStrategy:
         import json
 
         def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
-            return ModelResponse(
-                parts=[
-                    TextPart(
-                        content=json.dumps(
-                            {"is_in_category": False, "explanation": "This is not a work email"}
-                        )
-                    )
+            response = {
+                "matches": [
+                    {
+                        "category_index": 0,
+                        "is_in_category": False,
+                        "explanation": "This is not a work email",
+                        "confidence": 0.1,
+                    }
                 ]
-            )
+            }
+            return ModelResponse(parts=[TextPart(content=json.dumps(response))])
 
         function_model = FunctionModel(mock_model_func)
 
@@ -211,16 +235,29 @@ class TestLLMClassificationStrategy:
         """Test classify with multiple categories, some matching."""
         import json
 
-        responses = [
-            {"is_in_category": True, "explanation": "This is about work travel"},
-            {"is_in_category": False, "explanation": "Not a newsletter"},
-            {"is_in_category": True, "explanation": "This is a receipt"},
-        ]
-        response_idx = [0]
-
         def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
-            response = responses[response_idx[0]]
-            response_idx[0] += 1
+            response = {
+                "matches": [
+                    {
+                        "category_index": 0,
+                        "is_in_category": True,
+                        "explanation": "This is about work travel",
+                        "confidence": 0.92,
+                    },
+                    {
+                        "category_index": 1,
+                        "is_in_category": False,
+                        "explanation": "Not a newsletter",
+                        "confidence": 0.1,
+                    },
+                    {
+                        "category_index": 2,
+                        "is_in_category": True,
+                        "explanation": "This is a receipt",
+                        "confidence": 0.88,
+                    },
+                ]
+            }
             return ModelResponse(parts=[TextPart(content=json.dumps(response))])
 
         function_model = FunctionModel(mock_model_func)
@@ -245,20 +282,29 @@ class TestLLMClassificationStrategy:
         matches = strategy.classify(message, categories, top_n=10, threshold=0.5)
 
         assert len(matches) == 2
+        # Should be sorted by confidence score descending
         assert matches[0].category.name == "Work Travel"
+        assert matches[0].score == 0.92
         assert matches[1].category.name == "Receipts"
-        assert all(m.score == 1.0 for m in matches)
+        assert matches[1].score == 0.88
 
     def test_classify_respects_top_n(self):
         """Test that classify respects the top_n parameter."""
         import json
 
-        responses = [{"is_in_category": True, "explanation": "This matches"} for _ in range(5)]
-        response_idx = [0]
-
         def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
-            response = responses[response_idx[0]]
-            response_idx[0] += 1
+            # Return 5 matches with different confidence scores
+            response = {
+                "matches": [
+                    {
+                        "category_index": i,
+                        "is_in_category": True,
+                        "explanation": f"Match {i}",
+                        "confidence": 0.9 - (i * 0.1),  # Descending scores
+                    }
+                    for i in range(5)
+                ]
+            }
             return ModelResponse(parts=[TextPart(content=json.dumps(response))])
 
         function_model = FunctionModel(mock_model_func)
@@ -282,21 +328,26 @@ class TestLLMClassificationStrategy:
         matches = strategy.classify(message, categories, top_n=2, threshold=0.5)
 
         assert len(matches) == 2
+        # Should get the highest confidence matches
+        assert matches[0].score == 0.9
+        assert matches[1].score == 0.8
 
     def test_classify_respects_threshold(self):
         """Test that classify respects the threshold parameter."""
         import json
 
         def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
-            return ModelResponse(
-                parts=[
-                    TextPart(
-                        content=json.dumps(
-                            {"is_in_category": True, "explanation": "This is a match"}
-                        )
-                    )
+            response = {
+                "matches": [
+                    {
+                        "category_index": 0,
+                        "is_in_category": True,
+                        "explanation": "This is a match",
+                        "confidence": 0.85,
+                    }
                 ]
-            )
+            }
+            return ModelResponse(parts=[TextPart(content=json.dumps(response))])
 
         function_model = FunctionModel(mock_model_func)
 
@@ -312,12 +363,12 @@ class TestLLMClassificationStrategy:
 
         category = Category(id=1, name="Test", description="Test category")
 
-        # With high threshold (> 1.0), should not match
-        matches = strategy.classify(message, [category], top_n=3, threshold=1.5)
+        # With high threshold (> 0.85), should not match
+        matches = strategy.classify(message, [category], top_n=3, threshold=0.9)
         assert len(matches) == 0
 
-        # With threshold = 1.0, should match
-        matches = strategy.classify(message, [category], top_n=3, threshold=1.0)
+        # With threshold = 0.85, should match
+        matches = strategy.classify(message, [category], top_n=3, threshold=0.85)
         assert len(matches) == 1
 
         # With low threshold, should match
@@ -329,18 +380,17 @@ class TestLLMClassificationStrategy:
         import json
 
         def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
-            return ModelResponse(
-                parts=[
-                    TextPart(
-                        content=json.dumps(
-                            {
-                                "is_in_category": True,
-                                "explanation": "Email contains work-related keywords and sender domain",
-                            }
-                        )
-                    )
+            response = {
+                "matches": [
+                    {
+                        "category_index": 0,
+                        "is_in_category": True,
+                        "explanation": "Email contains work-related keywords and sender domain",
+                        "confidence": 0.93,
+                    }
                 ]
-            )
+            }
+            return ModelResponse(parts=[TextPart(content=json.dumps(response))])
 
         function_model = FunctionModel(mock_model_func)
 
@@ -365,7 +415,7 @@ class TestLLMClassificationStrategy:
         assert isinstance(match.score, float)
         assert isinstance(match.explanation, str)
         assert match.category == category
-        assert match.score == 1.0
+        assert match.score == 0.93
         assert "work-related keywords" in match.explanation.lower()
 
 
@@ -375,27 +425,39 @@ class TestCategoryMatchOutput:
     def test_valid_output(self):
         """Test creating valid CategoryMatchOutput."""
         output = CategoryMatchOutput(
+            category_index=0,
             is_in_category=True,
             explanation="This email is about work-related travel",
+            confidence=0.87,
         )
 
+        assert output.category_index == 0
         assert output.is_in_category is True
         assert output.explanation == "This email is about work-related travel"
+        assert output.confidence == 0.87
 
     def test_output_false_match(self):
         """Test creating output for non-match."""
         output = CategoryMatchOutput(
+            category_index=1,
             is_in_category=False,
             explanation="This email is not related to the category",
+            confidence=0.15,
         )
 
+        assert output.category_index == 1
         assert output.is_in_category is False
         assert output.explanation == "This email is not related to the category"
+        assert output.confidence == 0.15
 
     def test_output_validation(self):
         """Test that output validates required fields."""
         with pytest.raises(ValidationError):  # Pydantic will raise validation error
-            CategoryMatchOutput(is_in_category=True)  # type: ignore  # Missing explanation
+            CategoryMatchOutput(  # type: ignore
+                is_in_category=True, explanation="Test", confidence=0.9
+            )  # Missing category_index
 
         with pytest.raises(ValidationError):
-            CategoryMatchOutput(explanation="Test")  # type: ignore  # Missing is_in_category
+            CategoryMatchOutput(  # type: ignore
+                category_index=0, explanation="Test", confidence=0.9
+            )  # Missing is_in_category

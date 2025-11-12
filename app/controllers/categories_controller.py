@@ -2,11 +2,15 @@
 Categories controller for handling API requests.
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.deps import get_categories_service
 from app.services.categories_service import CategoriesService
+
+logger = logging.getLogger(__name__)
 
 
 class CategoryRequest(BaseModel):
@@ -50,14 +54,17 @@ class CategoriesController:
         self, request: CategoryRequest, service: CategoriesService = Depends(get_categories_service)
     ) -> CategoryResponse:
         """Create a new category."""
+        logger.info(f"API: Creating category '{request.name}'")
         try:
             result = service.create_category(request.name, request.description)
+            logger.info(f"API: Category '{request.name}' created successfully")
             return CategoryResponse(
                 id=result.category.id,
                 name=result.category.name,
                 description=result.category.description,
             )
         except ValueError as e:
+            logger.error(f"API: Failed to create category '{request.name}': {e}")
             raise HTTPException(status_code=400, detail=str(e)) from e
 
     async def list_categories(

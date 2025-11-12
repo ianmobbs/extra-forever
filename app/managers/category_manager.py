@@ -2,9 +2,13 @@
 Category manager for CRUD operations on Category entities.
 """
 
+import logging
+
 from sqlalchemy.orm import Session
 
 from models import Category
+
+logger = logging.getLogger(__name__)
 
 
 class CategoryManager:
@@ -15,9 +19,11 @@ class CategoryManager:
 
     def create(self, name: str, description: str, embedding: list[float] | None = None) -> Category:
         """Create a new category."""
+        logger.debug(f"CategoryManager: Creating category '{name}'")
         category = Category(name=name, description=description, embedding=embedding)
         self.session.add(category)
         self.session.flush()  # Flush to catch IntegrityError before commit
+        logger.debug(f"CategoryManager: Category '{name}' created with id={category.id}")
         return category
 
     def get_by_id(self, category_id: int) -> Category | None:
@@ -30,7 +36,9 @@ class CategoryManager:
 
     def get_all(self) -> list[Category]:
         """Get all categories."""
-        return self.session.query(Category).all()
+        categories = self.session.query(Category).all()
+        logger.debug(f"CategoryManager: Retrieved {len(categories)} categories")
+        return categories
 
     def update(
         self,

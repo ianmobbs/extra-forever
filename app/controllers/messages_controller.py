@@ -2,6 +2,7 @@
 Messages controller for handling API requests.
 """
 
+import logging
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -19,13 +20,18 @@ from app.services.messages_service import (
     MessagesService,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class CategoryInMessage(BaseModel):
-    """Category info in message response."""
+    """Category info in message response with classification metadata."""
 
     id: int
     name: str
     description: str
+    score: float | None = None  # Classification confidence score
+    explanation: str | None = None  # Classification explanation
+    classified_at: datetime | None = None  # When the classification was made
 
 
 class MessageResponse(BaseModel):
@@ -76,6 +82,7 @@ class CategoryClassification(BaseModel):
 
     category_id: int
     category_name: str
+    score: float  # Classification confidence score
     is_in_category: bool = True  # Always true for matched categories
     explanation: str
 
@@ -89,6 +96,18 @@ class ClassifyResponse(BaseModel):
 
 def _message_to_response(msg) -> MessageResponse:
     """Helper to convert a Message to MessageResponse with categories."""
+    categories = []
+    for mc in msg.message_categories:
+        categories.append(
+            CategoryInMessage(
+                id=mc.category.id,
+                name=mc.category.name,
+                description=mc.category.description,
+                score=mc.score,
+                explanation=mc.explanation,
+                classified_at=mc.classified_at,
+            )
+        )
     return MessageResponse(
         id=msg.id,
         subject=msg.subject,
@@ -97,10 +116,7 @@ def _message_to_response(msg) -> MessageResponse:
         snippet=msg.snippet,
         body=msg.body,
         date=msg.date,
-        categories=[
-            CategoryInMessage(id=cat.id, name=cat.name, description=cat.description)
-            for cat in msg.categories
-        ],
+        categories=categories,
     )
 
 
@@ -251,6 +267,7 @@ class MessagesController:
         db_session: Session = Depends(get_db_session),
     ) -> ClassifyResponse:
         """Classify a message into categories using cosine similarity."""
+        logger.info(f"Classifying message: {message_id} (top_n={top_n}, threshold={threshold})")
         try:
             # Create classification service with the requested top_n and threshold
             service = ClassificationService(db_session, top_n=top_n, threshold=threshold)
@@ -260,11 +277,12 @@ class MessagesController:
                 CategoryClassification(
                     category_id=cat.id,
                     category_name=cat.name,
+                    score=score,
                     is_in_category=True,
                     explanation=explanation,
                 )
-                for cat, explanation in zip(
-                    result.matched_categories, result.explanations, strict=True
+                for cat, score, explanation in zip(
+                    result.matched_categories, result.scores, result.explanations, strict=True
                 )
             ]
 

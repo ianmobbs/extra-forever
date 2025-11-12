@@ -2,10 +2,15 @@
 Embedding service for generating text embeddings using OpenAI API.
 """
 
+import logging
+import time
+
 from openai import OpenAI
 
 from app.config import config
 from models import Category, Message
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
@@ -23,6 +28,7 @@ class EmbeddingService:
         key = api_key if api_key is not None else config.OPENAI_API_KEY
         self.client = OpenAI(api_key=key) if key else OpenAI()
         self.model = model if model is not None else config.EMBEDDING_MODEL
+        logger.info(f"Initialized EmbeddingService with model: {self.model}")
 
     def embed_message(self, message: Message) -> list[float]:
         """
@@ -36,8 +42,11 @@ class EmbeddingService:
         Returns:
             List of floats representing the embedding vector
         """
+        logger.debug(f"Generating embedding for message: {message.id}")
         snippet = message.snippet or ""
         body = (message.body or "")[:8000]  # Truncate body if too long (OpenAI has token limits)
+        if len(message.body or "") > 8000:
+            logger.debug(f"Truncated message body from {len(message.body)} to 8000 chars")
         text = (
             f"Subject: {message.subject}\nFrom: {message.sender}\nSnippet: {snippet}\nBody: {body}"
         )
@@ -55,6 +64,7 @@ class EmbeddingService:
         Returns:
             List of floats representing the embedding vector
         """
+        logger.debug(f"Generating embedding for category: {category.name}")
         # Combine name and description for embedding
         text = f"Category: {category.name}\nDescription: {category.description}"
 
@@ -70,8 +80,15 @@ class EmbeddingService:
         Returns:
             List of floats representing the embedding vector
         """
-        response = self.client.embeddings.create(
-            model=self.model, input=text, encoding_format="float"
-        )
-
-        return response.data[0].embedding
+        start_time = time.time()
+        try:
+            logger.debug(f"Calling OpenAI embeddings API with {len(text)} chars")
+            response = self.client.embeddings.create(
+                model=self.model, input=text, encoding_format="float"
+            )
+            elapsed = time.time() - start_time
+            logger.debug(f"OpenAI embedding request completed in {elapsed:.3f}s")
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(f"Failed to create embedding: {e}")
+            raise

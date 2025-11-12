@@ -8,6 +8,9 @@ export type CategoryInMessage = {
   id: number;
   name: string;
   description: string;
+  score?: number;
+  explanation?: string;
+  classified_at?: string;
 };
 
 export type Message = {

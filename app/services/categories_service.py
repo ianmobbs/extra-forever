@@ -2,6 +2,8 @@
 Categories service for orchestrating category operations.
 """
 
+import logging
+import time
 from dataclasses import dataclass
 
 from sqlalchemy.exc import IntegrityError
@@ -10,6 +12,8 @@ from sqlalchemy.orm import Session
 from app.managers.category_manager import CategoryManager
 from app.services.embedding_service import EmbeddingService
 from models import Category
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,6 +41,9 @@ class CategoriesService:
         Returns:
             CategoryResult with the created category
         """
+        start_time = time.time()
+        logger.debug(f"Creating category: {name}")
+
         # Create temporary category object for embedding
         temp_category = Category(name=name, description=description)
 
@@ -48,12 +55,15 @@ class CategoriesService:
             category = manager.create(name=name, description=description, embedding=embedding)
             self.db_session.commit()
             self.db_session.refresh(category)
+            logger.debug(f"Category created in {time.time() - start_time:.3f}s")
             return CategoryResult(category=category)
         except IntegrityError as e:
             self.db_session.rollback()
+            logger.error(f"Category with name '{name}' already exists")
             raise ValueError(f"Category with name '{name}' already exists") from e
-        except Exception:
+        except Exception as e:
             self.db_session.rollback()
+            logger.error(f"Failed to create category {name}: {e}")
             raise
 
     def get_category(self, category_id: int) -> CategoryResult | None:
