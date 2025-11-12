@@ -1,0 +1,42 @@
+# Tiltignore - files to ignore for Tilt watching
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Node/UI
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vscode/
+.DS_Store
+
+# Database
+*.db
+*.db-journal
+
+# Environment
+.env
+.env.local
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Git
+.git/
+.gitignore

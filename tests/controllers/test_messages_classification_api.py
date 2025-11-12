@@ -2,16 +2,20 @@
 Tests for message classification API endpoint.
 """
 
+import json
 import tempfile
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic_ai import ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from app.controllers.messages_controller import MessagesController
 from app.deps import get_db_session, get_messages_service
 from app.services.categories_service import CategoriesService
+from app.services.classification import LLMClassificationStrategy
 from app.services.messages_service import MessagesService
 from app.stores.sqlite_store import SQLiteStore
 
@@ -163,3 +167,236 @@ class TestMessageClassificationAPI:
         assert isinstance(data["classifications"], list)
         # Note: May be empty if threshold is too high
         assert len(data["classifications"]) >= 0
+
+
+class TestLLMClassificationIntegration:
+    """Test LLM classification strategy integration at the service layer."""
+
+    def test_llm_classification_with_test_model(self, db_session):
+        """Test LLM classification with FunctionModel (no real API calls)."""
+        # Create mock function that returns responses
+        responses = [
+            {
+                "is_in_category": True,
+                "explanation": "This email is about work travel based on the subject and sender",
+            },
+            {
+                "is_in_category": False,
+                "explanation": "This email is not related to personal matters",
+            },
+        ]
+        response_idx = [0]
+
+        def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
+            response = responses[response_idx[0]]
+            response_idx[0] += 1
+            return ModelResponse(parts=[TextPart(content=json.dumps(response))])
+
+        function_model = FunctionModel(mock_model_func)
+
+        # Create LLM strategy with function model
+        strategy = LLMClassificationStrategy()
+        strategy._agent._model = function_model
+
+        # Create message
+        from models import Message
+
+        message = Message(
+            id="msg1",
+            subject="Flight confirmation for business trip",
+            sender="airline@company.com",
+            to=["employee@company.com"],
+            body="Your flight to NYC is confirmed for the project meeting.",
+        )
+
+        # Create categories
+        from models import Category
+
+        work_travel = Category(
+            id=1, name="Work Travel", description="Work-related travel receipts and bookings"
+        )
+        personal = Category(
+            id=2, name="Personal", description="Personal emails from friends and family"
+        )
+
+        # Run classification
+        matches = strategy.classify(
+            message=message, categories=[work_travel, personal], top_n=10, threshold=0.5
+        )
+
+        # Verify results
+        assert len(matches) == 1
+        assert matches[0].category.name == "Work Travel"
+        assert matches[0].score == 1.0
+        assert "work travel" in matches[0].explanation.lower()
+
+    def test_llm_classification_service_integration(self, db_session):
+        """Test LLM classification through strategy directly."""
+
+        # Create function model
+        def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        content=json.dumps(
+                            {
+                                "is_in_category": True,
+                                "explanation": "Flight receipt matches work travel category",
+                            }
+                        )
+                    )
+                ]
+            )
+
+        function_model = FunctionModel(mock_model_func)
+
+        # Create strategy with function model
+        strategy = LLMClassificationStrategy()
+        strategy._agent._model = function_model
+
+        # Create message (no database needed for strategy test)
+        from models import Category, Message
+
+        message = Message(
+            id="test_msg",
+            subject="Flight receipt",
+            sender="airline@example.com",
+            to=["user@company.com"],
+            body="Your flight receipt for $500",
+        )
+
+        # Create category
+        category = Category(id=1, name="Work Travel", description="Work-related travel expenses")
+
+        # Classify using strategy directly
+        matches = strategy.classify(message=message, categories=[category], top_n=3, threshold=0.5)
+
+        # Verify results
+        assert len(matches) == 1
+        assert matches[0].category.name == "Work Travel"
+        assert matches[0].score == 1.0
+        assert "Flight receipt" in matches[0].explanation
+
+    def test_llm_classification_multiple_categories(self, db_session):
+        """Test LLM classification with multiple categories."""
+        # Create function model with responses for each category
+        responses = [
+            {"is_in_category": True, "explanation": "This is a work travel receipt"},
+            {"is_in_category": True, "explanation": "This is a receipt"},
+            {"is_in_category": False, "explanation": "Not a newsletter"},
+        ]
+        response_idx = [0]
+
+        def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
+            response = responses[response_idx[0]]
+            response_idx[0] += 1
+            return ModelResponse(parts=[TextPart(content=json.dumps(response))])
+
+        function_model = FunctionModel(mock_model_func)
+
+        # Create strategy
+        strategy = LLMClassificationStrategy()
+        strategy._agent._model = function_model
+
+        # Create message
+        from models import Category, Message
+
+        message = Message(
+            id="receipt_msg",
+            subject="Flight Receipt - NYC Trip",
+            sender="airline@example.com",
+            to=["employee@company.com"],
+            body="Receipt for flight booking",
+        )
+
+        # Create categories
+        categories = [
+            Category(id=1, name="Work Travel", description="Work travel expenses"),
+            Category(id=2, name="Receipts", description="Purchase receipts"),
+            Category(id=3, name="Newsletters", description="Email newsletters"),
+        ]
+
+        # Classify
+        matches = strategy.classify(message=message, categories=categories, top_n=10, threshold=0.5)
+
+        # Verify results
+        assert len(matches) == 2
+        assert matches[0].category.name == "Work Travel"
+        assert matches[1].category.name == "Receipts"
+        assert all(m.score == 1.0 for m in matches)
+
+    def test_llm_classification_respects_top_n(self, db_session):
+        """Test that LLM classification respects top_n parameter."""
+        # Create function model that matches all categories
+        responses = [{"is_in_category": True, "explanation": "This matches"} for _ in range(5)]
+        response_idx = [0]
+
+        def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
+            response = responses[response_idx[0]]
+            response_idx[0] += 1
+            return ModelResponse(parts=[TextPart(content=json.dumps(response))])
+
+        function_model = FunctionModel(mock_model_func)
+
+        # Create strategy
+        strategy = LLMClassificationStrategy()
+        strategy._agent._model = function_model
+
+        # Create message and categories
+        from models import Category, Message
+
+        message = Message(
+            id="msg",
+            subject="Test",
+            sender="test@example.com",
+            to=["recipient@example.com"],
+        )
+
+        categories = [
+            Category(id=i, name=f"Category{i}", description=f"Description {i}") for i in range(5)
+        ]
+
+        # Classify with top_n=2
+        matches = strategy.classify(message=message, categories=categories, top_n=2, threshold=0.5)
+
+        # Should only return 2 matches even though all matched
+        assert len(matches) == 2
+
+    def test_llm_classification_no_matches(self, db_session):
+        """Test LLM classification when no categories match."""
+
+        # Create function model that doesn't match
+        def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        content=json.dumps(
+                            {"is_in_category": False, "explanation": "Does not match this category"}
+                        )
+                    )
+                ]
+            )
+
+        function_model = FunctionModel(mock_model_func)
+
+        # Create strategy
+        strategy = LLMClassificationStrategy()
+        strategy._agent._model = function_model
+
+        # Create message and category
+        from models import Category, Message
+
+        message = Message(
+            id="msg",
+            subject="Personal email",
+            sender="friend@example.com",
+            to=["me@example.com"],
+        )
+
+        category = Category(id=1, name="Work", description="Work-related emails")
+
+        # Classify
+        matches = strategy.classify(message=message, categories=[category], top_n=10, threshold=0.5)
+
+        # Should have no matches
+        assert len(matches) == 0

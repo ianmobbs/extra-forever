@@ -1,5 +1,8 @@
 - The project uses `uv` for package and Python version management
 - Always use your task planner or TODO list tools to track your work
-- Always add tests - general unit tests for new behavior, and integration-like tests at the controller level when relevant for different scenarios
+- Always add tests - general unit tests for new behavior, and (only when relevant) integration-like tests at the controller level for different scenarios.
+- Ensure tests are located in a file corresponding to the file under tests - for example, app/controllers/a_controller.py would be tested by tests/controllers/test_a_controller.py.
 - When you're done, run `uv run pytest` to ensure tests pass
 - Finally, run `ruff format` and ensure both `ruff` and `mypy` are green
+- For UI changes: run `cd ui && pnpm run format && pnpm run lint && pnpm run tsc` (or use pre-commit hooks)
+- You don't really need to write documentation, excessive UPDATE/ABOUT files, etc. When relevant you can update the READMEs a bit but that should be done sparingly. Never create a new .md file without being asked.

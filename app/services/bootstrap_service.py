@@ -155,13 +155,16 @@ class BootstrapService:
 
         Returns the number of successfully classified messages.
         """
-        from app.services.classification import ClassificationService
+        from app.services.classification import ClassificationService, LLMClassificationStrategy
 
         # Create a new session for classification batch operation
         session = self.store.create_session()
         try:
+            # Use LLM strategy for classification
+            llm_strategy = LLMClassificationStrategy(model="openai:gpt-4o-mini")
             classification_service = ClassificationService(
                 session,
+                strategy=llm_strategy,
                 top_n=classification_options.top_n,
                 threshold=classification_options.threshold,
             )

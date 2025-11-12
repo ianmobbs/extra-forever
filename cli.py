@@ -9,7 +9,7 @@ from rich.table import Table
 from app.config import config
 from app.services.bootstrap_service import BootstrapService
 from app.services.categories_service import CategoriesService
-from app.services.classification import ClassificationService
+from app.services.classification import ClassificationService, LLMClassificationStrategy
 from app.services.messages_service import ClassificationOptions, ImportOptions, MessagesService
 from app.stores.sqlite_store import SQLiteStore
 
@@ -44,11 +44,13 @@ def _create_messages_service(with_classification: bool = False):
 
     classification_service = None
     if with_classification:
-        # Create a separate session for classification service
+        # Create a separate session for classification service with LLM strategy
         class_session = _store.create_session()
         sessions.append(class_session)
+        llm_strategy = LLMClassificationStrategy(model="openai:gpt-4o-mini")
         classification_service = ClassificationService(
             class_session,
+            strategy=llm_strategy,
             top_n=config.CLASSIFICATION_TOP_N,
             threshold=config.CLASSIFICATION_THRESHOLD,
         )
@@ -65,11 +67,13 @@ def _create_categories_service():
 
 
 def _create_classification_service(top_n: int | None = None, threshold: float | None = None):
-    """Create a ClassificationService with a fresh session."""
+    """Create a ClassificationService with a fresh session using LLM strategy."""
     session = _store.create_session()
+    llm_strategy = LLMClassificationStrategy(model="openai:gpt-4o-mini")
     return (
         ClassificationService(
             session,
+            strategy=llm_strategy,
             top_n=top_n if top_n is not None else config.CLASSIFICATION_TOP_N,
             threshold=threshold if threshold is not None else config.CLASSIFICATION_THRESHOLD,
         ),
@@ -131,7 +135,7 @@ def bootstrap_system(
         True, "--drop/--no-drop", help="Drop existing tables before bootstrapping"
     ),
     auto_classify: bool = typer.Option(
-        True, "--classify/--no-classify", help="Automatically classify messages into categories"
+        True, "--classify/--no-classify", help="Automatically classify messages using LLM"
     ),
     classification_top_n: int = typer.Option(
         3, "--top-n", "-n", help="Maximum number of categories per message"
@@ -144,7 +148,10 @@ def bootstrap_system(
     Bootstrap the system with sample messages and categories.
 
     This command initializes the database with sample data from JSONL files,
-    making the system immediately usable for testing and exploration.
+    and automatically classifies messages using LLM-based semantic analysis.
+
+    The system uses an LLM (gpt-4o-mini) to analyze message content and
+    determine category membership with natural language explanations.
 
     Examples:
         extra bootstrap
@@ -300,7 +307,7 @@ def import_messages(
     auto_classify: bool = typer.Option(
         False,
         "--classify/--no-classify",
-        help="Automatically classify messages into categories after import",
+        help="Automatically classify messages using LLM after import",
     ),
     classification_top_n: int = typer.Option(
         3, "--top-n", "-n", help="Maximum number of categories per message (when using --classify)"
@@ -560,10 +567,10 @@ def classify_message(
     ),
 ):
     """
-    Classify a message into categories using cosine similarity.
+    Classify a message into categories using LLM-based semantic analysis.
 
-    This will match the message against all available categories based on their
-    embeddings and return the top N matches above the similarity threshold.
+    This will analyze the message content using an LLM to determine which categories
+    it belongs to, providing natural language explanations for each classification.
 
     Examples:
         extra messages classify msg123

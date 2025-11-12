@@ -7,6 +7,7 @@ from app.services.classification.classification_service import (
 from app.services.classification.strategies import (
     ClassificationStrategy,
     EmbeddingSimilarityStrategy,
+    LLMClassificationStrategy,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "ClassificationService",
     "ClassificationStrategy",
     "EmbeddingSimilarityStrategy",
+    "LLMClassificationStrategy",
 ]

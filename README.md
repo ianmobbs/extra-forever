@@ -1,12 +1,37 @@
 # Extra Forever
 
-Gmail-style message classification system with CLI and API interfaces.
+Gmail-style message classification system with CLI, API, and Web UI interfaces.
 
-## Setup
+## Quick Start with Tilt (Recommended)
+
+The easiest way to run everything:
 
 ```bash
-# Install dependencies
+# Install Tilt (one-time setup)
+brew install tilt-dev/tap/tilt  # macOS
+# See TILT.md for other platforms
+
+# Start all services
+tilt up
+```
+
+Press **space** to open the Tilt UI, then visit:
+- **Web UI**: http://localhost:5173
+- **API**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs
+
+See [TILT.md](TILT.md) for detailed Tilt documentation.
+
+## Manual Setup
+
+If you prefer to run services individually:
+
+```bash
+# Install Python dependencies
 uv sync
+
+# Install UI dependencies
+cd ui && pnpm install
 
 # Install CLI globally (optional)
 uv pip install -e .
@@ -73,15 +98,99 @@ extra-forever/
 
 Both CLI and API use the same controllers, ensuring consistent behavior across interfaces.
 
+## Web UI
+
+A modern Preact-based web interface for managing messages and categories.
+
+### Quick Start
+```bash
+# With Tilt (recommended)
+tilt up
+
+# Manual
+cd ui
+pnpm install
+pnpm dev
+```
+
+Visit http://localhost:5173 to:
+- View and classify messages
+- Create and manage categories
+- See classifications in real-time
+
+See [ui/README.md](ui/README.md) for UI documentation.
+
 ## Development
 
+### With Tilt (Recommended)
 ```bash
-# Run CLI
-uv run extra --help
+# Start everything
+tilt up
 
-# Run API server
+# Bootstrap sample data (click in Tilt UI or run manually)
+uv run python cli.py bootstrap sample-messages.jsonl sample-categories.jsonl --drop-existing
+
+# Run tests (click in Tilt UI or run manually)
+uv run pytest -v
+
+# Format and lint (click in Tilt UI or run manually)
+ruff format .
+ruff check . && mypy .
+```
+
+### Manual (Traditional)
+```bash
+# Terminal 1 - API
 uv run uvicorn api:app --reload
+
+# Terminal 2 - UI
+cd ui && pnpm dev
+
+# Terminal 3 - CLI commands
+uv run extra --help
 
 # View API docs
 open http://localhost:8000/docs
+
+# View UI
+open http://localhost:5173
+```
+
+## Features
+
+### 📧 Message Management
+- Import messages from JSONL files
+- View message details (subject, sender, body, etc.)
+- Classify messages into custom categories
+- Web UI, API, and CLI interfaces
+
+### 🏷️ Category Management
+- Define categories with natural language descriptions
+- AI-powered classification using embeddings
+- Support for multiple classification strategies:
+  - Cosine similarity (default)
+  - LLM-based classification
+  - Hybrid approaches
+
+### 🔍 Classification
+- Embedding-based similarity matching
+- Configurable threshold and top-N results
+- Explanations for each classification
+- Batch processing support
+
+## Testing
+
+```bash
+# With Tilt
+tilt up
+# Click "tests" in Tilt UI
+
+# Manual
+uv run pytest -v
+
+# With coverage
+uv run pytest --cov=app --cov=models --cov-report=html
+
+# View coverage report
+open htmlcov/index.html
 ```
