@@ -2,15 +2,13 @@
 Bootstrap service for initializing the system with sample data.
 """
 
-import base64
-import json
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from app.services.categories_service import CategoriesService
 from app.services.messages_service import ClassificationOptions, MessagesService
 from app.stores.sqlite_store import SQLiteStore
+from app.utils.jsonl_parser import decode_base64_body, parse_iso_date
 from models import Category, Message
 
 
@@ -28,10 +26,15 @@ class BootstrapResult:
 class BootstrapService:
     """Service for bootstrapping the system with initial data."""
 
-    def __init__(self, store: SQLiteStore):
+    def __init__(
+        self,
+        store: SQLiteStore,
+        messages_service: MessagesService,
+        categories_service: CategoriesService,
+    ):
         self.store = store
-        self.messages_service = MessagesService(store)
-        self.categories_service = CategoriesService(store)
+        self.messages_service = messages_service
+        self.categories_service = categories_service
 
     def bootstrap(
         self,
@@ -105,20 +108,15 @@ class BootstrapService:
 
         Each line should have: {"name": "...", "description": "..."}
         """
-        categories = []
+        from app.utils.jsonl_parser import parse_jsonl
 
-        with open(file_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                data = json.loads(line)
-                result = self.categories_service.create_category(
-                    name=data["name"], description=data["description"]
-                )
-                categories.append(result.category)
+        def parse_category(data: dict) -> Category:
+            result = self.categories_service.create_category(
+                name=data["name"], description=data["description"]
+            )
+            return result.category
 
-        return categories
+        return parse_jsonl(file_path, parse_category)
 
     def _bootstrap_messages(self, file_path: Path) -> list[Message]:
         """
@@ -126,34 +124,28 @@ class BootstrapService:
 
         Each line should have Gmail-style message format.
         """
-        messages = []
+        from app.utils.jsonl_parser import parse_jsonl
 
-        with open(file_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                data = json.loads(line)
+        def parse_message(data: dict) -> Message:
+            # Decode body using utility function
+            body_decoded = decode_base64_body(data["body"])
 
-                # Decode body
-                body_decoded = base64.b64decode(data["body"]).decode("utf-8", errors="replace")
+            # Parse date using utility function
+            date_obj = parse_iso_date(data["date"])
 
-                # Parse date
-                date_obj = datetime.fromisoformat(data["date"].replace("Z", "+00:00"))
+            # Create message using the service (which generates embedding)
+            result = self.messages_service.create_message(
+                id=data["id"],
+                subject=data["subject"],
+                sender=data["from"],
+                to=data["to"],
+                snippet=data.get("snippet"),
+                body=body_decoded,
+                date=date_obj,
+            )
+            return result.message
 
-                # Create message using the service (which generates embedding)
-                result = self.messages_service.create_message(
-                    id=data["id"],
-                    subject=data["subject"],
-                    sender=data["from"],
-                    to=data["to"],
-                    snippet=data.get("snippet"),
-                    body=body_decoded,
-                    date=date_obj,
-                )
-                messages.append(result.message)
-
-        return messages
+        return parse_jsonl(file_path, parse_message)
 
     def _classify_messages(
         self, message_ids: list[str], classification_options: ClassificationOptions
@@ -163,21 +155,26 @@ class BootstrapService:
 
         Returns the number of successfully classified messages.
         """
-        from app.services.classification_service import ClassificationService
+        from app.services.classification import ClassificationService
 
-        classification_service = ClassificationService(
-            self.store,
-            top_n=classification_options.top_n,
-            threshold=classification_options.threshold,
-        )
+        # Create a new session for classification batch operation
+        session = self.store.create_session()
+        try:
+            classification_service = ClassificationService(
+                session,
+                top_n=classification_options.top_n,
+                threshold=classification_options.threshold,
+            )
 
-        classified_count = 0
-        for message_id in message_ids:
-            try:
-                classification_service.classify_message(message_id)
-                classified_count += 1
-            except ValueError:
-                # Skip messages that can't be classified
-                pass
+            classified_count = 0
+            for message_id in message_ids:
+                try:
+                    classification_service.classify_message_by_id(message_id)
+                    classified_count += 1
+                except ValueError:
+                    # Skip messages that can't be classified
+                    pass
 
-        return classified_count
+            return classified_count
+        finally:
+            session.close()

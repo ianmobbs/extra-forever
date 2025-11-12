@@ -15,7 +15,9 @@ class SQLiteStore:
 
     def __init__(self, db_path: str = "sqlite:///messages.db", echo: bool = False):
         self.db_path = db_path
-        self.engine = create_engine(db_path, echo=echo)
+        # For SQLite, allow connections from different threads (needed for FastAPI)
+        connect_args = {"check_same_thread": False} if db_path.startswith("sqlite") else {}
+        self.engine = create_engine(db_path, echo=echo, connect_args=connect_args)
         self.SessionLocal = sessionmaker(bind=self.engine)
 
     def init_db(self, drop_existing: bool = False) -> None:

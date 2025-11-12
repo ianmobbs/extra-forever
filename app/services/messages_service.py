@@ -2,17 +2,25 @@
 Messages service for orchestrating message import and processing.
 """
 
-import base64
-import json
+from __future__ import annotations
+
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from app.managers.message_manager import MessageManager
 from app.services.embedding_service import EmbeddingService
 from app.stores.sqlite_store import SQLiteStore
+from app.utils.jsonl_parser import decode_base64_body, parse_iso_date
 from models import Message
+
+if TYPE_CHECKING:
+    from app.services.classification import ClassificationService
 
 
 @dataclass
@@ -37,7 +45,7 @@ class ImportOptions:
     """Options for message import."""
 
     drop_existing: bool = True
-    classification: ClassificationOptions = None
+    classification: ClassificationOptions | None = None
 
     def __post_init__(self):
         if self.classification is None:
@@ -54,13 +62,23 @@ class MessageResult:
 class MessagesService:
     """Service for orchestrating message import and processing operations."""
 
-    def __init__(self, store: SQLiteStore, embedding_service: EmbeddingService | None = None):
-        self.store = store
+    def __init__(
+        self,
+        db_session: Session,
+        embedding_service: EmbeddingService | None = None,
+        classification_service: ClassificationService | None = None,
+        store: SQLiteStore | None = None,
+    ):
+        self.db_session = db_session
         self.embedding_service = embedding_service or EmbeddingService()
+        self.classification_service = classification_service
+        self.store = store  # Only needed for import_from_jsonl to call init_db
 
     def import_from_jsonl(self, file_path: Path, options: ImportOptions) -> ImportResult:
         """
         Import messages from a JSONL file.
+
+        Note: This method requires a store to be passed during initialization for DB init.
 
         Args:
             file_path: Path to the JSONL file
@@ -69,23 +87,27 @@ class MessagesService:
         Returns:
             ImportResult with count and preview messages
         """
+        if not self.store:
+            raise ValueError("Store required for import_from_jsonl operation")
+
         # Initialize database
         self.store.init_db(drop_existing=options.drop_existing)
 
         # Parse messages from file
         messages = self._parse_jsonl_file(file_path)
 
-        # Store messages
-        session = self.store.create_session()
+        # Store messages using a new session for the import transaction
+        import_session = self.store.create_session()
         try:
-            manager = MessageManager(session)
+            manager = MessageManager(import_session)
             manager.bulk_create(messages)
+            import_session.commit()
 
             # Get preview
             preview = manager.get_first_n(5)
 
             # Auto-classify messages if requested
-            if options.classification.auto_classify:
+            if options.classification and options.classification.auto_classify:
                 self._classify_all_messages(
                     messages,
                     top_n=options.classification.top_n,
@@ -94,57 +116,61 @@ class MessagesService:
 
             return ImportResult(total_imported=len(messages), preview_messages=preview)
         finally:
-            session.close()
+            import_session.close()
 
     def _parse_jsonl_file(self, file_path: Path) -> list[Message]:
         """Parse JSONL file and convert to Message objects."""
-        messages = []
+        from app.utils.jsonl_parser import parse_jsonl
 
-        with open(file_path) as f:
-            for line in f:
-                data = json.loads(line)
+        def parse_message(data: dict) -> Message:
+            # Decode body using utility function
+            body_decoded = decode_base64_body(data["body"])
 
-                # Decode body
-                body_decoded = base64.b64decode(data["body"]).decode("utf-8", errors="replace")
+            # Parse date using utility function
+            date_obj = parse_iso_date(data["date"])
 
-                # Parse date
-                date_obj = datetime.fromisoformat(data["date"].replace("Z", "+00:00"))
+            message = Message(
+                id=data["id"],
+                subject=data["subject"],
+                sender=data["from"],
+                to=data["to"],
+                snippet=data.get("snippet"),
+                body=body_decoded,
+                date=date_obj,
+            )
 
-                message = Message(
-                    id=data["id"],
-                    subject=data["subject"],
-                    sender=data["from"],
-                    to=data["to"],
-                    snippet=data.get("snippet"),
-                    body=body_decoded,
-                    date=date_obj,
-                )
+            # Generate embedding for the message
+            message.embedding = self.embedding_service.embed_message(message)
 
-                # Generate embedding for the message
-                message.embedding = self.embedding_service.embed_message(message)
+            return message
 
-                messages.append(message)
-
-        return messages
+        return parse_jsonl(file_path, parse_message)
 
     def _classify_all_messages(self, messages: list[Message], top_n: int, threshold: float) -> None:
         """
         Classify all messages and assign them to categories.
 
+        Requires a classification service to be injected during initialization.
+
         Args:
             messages: List of messages to classify
             top_n: Maximum number of categories per message
             threshold: Minimum similarity threshold
-        """
-        from app.services.classification_service import ClassificationService
 
-        classification_service = ClassificationService(self.store, top_n=top_n, threshold=threshold)
+        Raises:
+            ValueError: If no classification service was injected
+        """
+        if self.classification_service is None:
+            raise ValueError(
+                "Classification service must be injected to use auto-classification. "
+                "Pass a ClassificationService instance during MessagesService initialization."
+            )
 
         for message in messages:
             # Skip messages that can't be classified (e.g., no categories available)
             with suppress(ValueError):
                 # Classify message (which also assigns categories)
-                classification_service.classify_message(message.id)
+                self.classification_service.classify_message_by_id(message.id)
 
     def create_message(
         self,
@@ -179,9 +205,8 @@ class MessagesService:
         # Generate embedding
         embedding = self.embedding_service.embed_message(temp_message)
 
-        session = self.store.create_session()
+        manager = MessageManager(self.db_session)
         try:
-            manager = MessageManager(session)
             message = manager.create(
                 id=id,
                 subject=subject,
@@ -192,9 +217,15 @@ class MessagesService:
                 date=date,
                 embedding=embedding,
             )
+            self.db_session.commit()
+            self.db_session.refresh(message)
             return MessageResult(message=message)
-        finally:
-            session.close()
+        except IntegrityError as e:
+            self.db_session.rollback()
+            raise ValueError(f"Message with id '{id}' already exists") from e
+        except Exception:
+            self.db_session.rollback()
+            raise
 
     def get_message(self, message_id: str) -> MessageResult | None:
         """
@@ -206,15 +237,11 @@ class MessagesService:
         Returns:
             MessageResult or None if not found
         """
-        session = self.store.create_session()
-        try:
-            manager = MessageManager(session)
-            message = manager.get_by_id(message_id)
-            if message:
-                return MessageResult(message=message)
-            return None
-        finally:
-            session.close()
+        manager = MessageManager(self.db_session)
+        message = manager.get_by_id(message_id)
+        if message:
+            return MessageResult(message=message)
+        return None
 
     def list_messages(self, limit: int | None = None, offset: int | None = None) -> list[Message]:
         """
@@ -227,12 +254,8 @@ class MessagesService:
         Returns:
             List of messages
         """
-        session = self.store.create_session()
-        try:
-            manager = MessageManager(session)
-            return manager.get_all(limit=limit, offset=offset)
-        finally:
-            session.close()
+        manager = MessageManager(self.db_session)
+        return manager.get_all(limit=limit, offset=offset)
 
     def update_message(
         self,
@@ -259,9 +282,28 @@ class MessagesService:
         Returns:
             MessageResult or None if not found
         """
-        session = self.store.create_session()
+        manager = MessageManager(self.db_session)
+
+        # Get existing message to build updated version for embedding
+        existing_message = manager.get_by_id(message_id)
+        if not existing_message:
+            return None
+
         try:
-            manager = MessageManager(session)
+            # Build updated message object for embedding generation
+            temp_message = Message(
+                id=message_id,
+                subject=subject if subject is not None else existing_message.subject,
+                sender=sender if sender is not None else existing_message.sender,
+                to=to if to is not None else existing_message.to,
+                snippet=snippet if snippet is not None else existing_message.snippet,
+                body=body if body is not None else existing_message.body,
+                date=date if date is not None else existing_message.date,
+            )
+
+            # Regenerate embedding with updated data (idempotent with create)
+            embedding = self.embedding_service.embed_message(temp_message)
+
             message = manager.update(
                 message_id,
                 subject=subject,
@@ -270,12 +312,16 @@ class MessagesService:
                 snippet=snippet,
                 body=body,
                 date=date,
+                embedding=embedding,
             )
             if message:
+                self.db_session.commit()
+                self.db_session.refresh(message)
                 return MessageResult(message=message)
             return None
-        finally:
-            session.close()
+        except Exception:
+            self.db_session.rollback()
+            raise
 
     def delete_message(self, message_id: str) -> bool:
         """
@@ -287,9 +333,12 @@ class MessagesService:
         Returns:
             True if deleted, False if not found
         """
-        session = self.store.create_session()
+        manager = MessageManager(self.db_session)
         try:
-            manager = MessageManager(session)
-            return manager.delete(message_id)
-        finally:
-            session.close()
+            result = manager.delete(message_id)
+            if result:
+                self.db_session.commit()
+            return result
+        except Exception:
+            self.db_session.rollback()
+            raise

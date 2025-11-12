@@ -1,22 +1,23 @@
 """
-Messages controller for handling CLI and API requests.
+Messages controller for handling API requests.
 """
 
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
-from app.services.classification_service import ClassificationResult, ClassificationService
+from app.config import config
+from app.deps import get_db_session, get_messages_service
+from app.services.classification import ClassificationService
 from app.services.messages_service import (
     ClassificationOptions,
     ImportOptions,
-    ImportResult,
     MessagesService,
 )
-from app.stores.sqlite_store import SQLiteStore
 
 
 class CategoryInMessage(BaseModel):
@@ -37,7 +38,7 @@ class MessageResponse(BaseModel):
     snippet: str | None = None
     body: str | None = None
     date: datetime | None = None
-    categories: list[CategoryInMessage] = []
+    categories: list[CategoryInMessage] = Field(default_factory=list)
 
 
 class MessageCreateRequest(BaseModel):
@@ -80,11 +81,7 @@ class CategoryClassification(BaseModel):
 
 
 class ClassifyResponse(BaseModel):
-    """
-    API response for classification operation.
-
-    Returns classification results for a single message across multiple categories.
-    """
+    """API response for classification operation."""
 
     message_id: str
     classifications: list[CategoryClassification]
@@ -108,23 +105,22 @@ def _message_to_response(msg) -> MessageResponse:
 
 
 class MessagesController:
-    """Controller for message-related operations."""
+    """Controller for message-related API operations."""
 
-    def __init__(self, db_path: str = "sqlite:///messages.db"):
-        self.store = SQLiteStore(db_path=db_path, echo=False)
+    def __init__(self):
         self.router = APIRouter(prefix="/messages", tags=["messages"])
         self._register_routes()
 
     def _register_routes(self):
         """Register FastAPI routes."""
         self.router.post("/import", response_model=ImportResponse)(self.import_upload)
-        self.router.post("/", response_model=MessageResponse)(self.create_message_api)
-        self.router.get("/", response_model=list[MessageResponse])(self.list_messages_api)
-        self.router.get("/{message_id}", response_model=MessageResponse)(self.get_message_api)
-        self.router.put("/{message_id}", response_model=MessageResponse)(self.update_message_api)
-        self.router.delete("/{message_id}")(self.delete_message_api)
+        self.router.post("/", response_model=MessageResponse)(self.create_message)
+        self.router.get("/", response_model=list[MessageResponse])(self.list_messages)
+        self.router.get("/{message_id}", response_model=MessageResponse)(self.get_message)
+        self.router.put("/{message_id}", response_model=MessageResponse)(self.update_message)
+        self.router.delete("/{message_id}")(self.delete_message)
         self.router.post("/{message_id}/classify", response_model=ClassifyResponse)(
-            self.classify_message_api
+            self.classify_message
         )
 
     async def import_upload(
@@ -132,14 +128,11 @@ class MessagesController:
         file: UploadFile = File(...),
         drop_existing: bool = Form(True),
         auto_classify: bool = Form(False),
-        classification_top_n: int = Form(3),
-        classification_threshold: float = Form(0.5),
+        classification_top_n: int = Form(config.CLASSIFICATION_TOP_N),
+        classification_threshold: float = Form(config.CLASSIFICATION_THRESHOLD),
+        service: MessagesService = Depends(get_messages_service),
     ) -> ImportResponse:
-        """
-        API endpoint: Handle file upload and import messages.
-
-        Wraps the uploaded file in a tempfile, then delegates to import_messages.
-        """
+        """Import messages from uploaded JSONL file."""
         # Save uploaded file temporarily
         with tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=".jsonl") as tmp:
             content = await file.read()
@@ -153,7 +146,7 @@ class MessagesController:
                 threshold=classification_threshold,
             )
             options = ImportOptions(drop_existing=drop_existing, classification=classification_opts)
-            result = self.import_messages(Path(tmp_path), options)
+            result = service.import_from_jsonl(Path(tmp_path), options)
 
             # Convert to API response
             preview = [
@@ -174,28 +167,14 @@ class MessagesController:
             # Clean up temp file
             Path(tmp_path).unlink(missing_ok=True)
 
-    def import_messages(self, file_path: Path, options: ImportOptions) -> ImportResult:
-        """
-        Import messages from a JSONL file.
-
-        Core import logic used by both CLI and API interfaces.
-
-        Args:
-            file_path: Path to the JSONL file
-            options: Import configuration options
-
-        Returns:
-            ImportResult with import statistics
-        """
-        service = MessagesService(self.store)
-        return service.import_from_jsonl(file_path, options)
-
-    async def create_message_api(self, request: MessageCreateRequest) -> MessageResponse:
-        """
-        API endpoint: Create a new message.
-        """
+    async def create_message(
+        self,
+        request: MessageCreateRequest,
+        service: MessagesService = Depends(get_messages_service),
+    ) -> MessageResponse:
+        """Create a new message."""
         try:
-            result = self.create_message(
+            result = service.create_message(
                 id=request.id,
                 subject=request.subject,
                 sender=request.sender,
@@ -208,33 +187,35 @@ class MessagesController:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    async def list_messages_api(
-        self, limit: int | None = None, offset: int | None = None
+    async def list_messages(
+        self,
+        limit: int | None = None,
+        offset: int | None = None,
+        service: MessagesService = Depends(get_messages_service),
     ) -> list[MessageResponse]:
-        """
-        API endpoint: List all messages.
-        """
-        messages = self.list_messages(limit=limit, offset=offset)
+        """List all messages."""
+        messages = service.list_messages(limit=limit, offset=offset)
         return [_message_to_response(msg) for msg in messages]
 
-    async def get_message_api(self, message_id: str) -> MessageResponse:
-        """
-        API endpoint: Get a message by ID.
-        """
-        result = self.get_message(message_id)
+    async def get_message(
+        self, message_id: str, service: MessagesService = Depends(get_messages_service)
+    ) -> MessageResponse:
+        """Get a message by ID."""
+        result = service.get_message(message_id)
         if not result:
             raise HTTPException(status_code=404, detail="Message not found")
 
         return _message_to_response(result.message)
 
-    async def update_message_api(
-        self, message_id: str, request: MessageUpdateRequest
+    async def update_message(
+        self,
+        message_id: str,
+        request: MessageUpdateRequest,
+        service: MessagesService = Depends(get_messages_service),
     ) -> MessageResponse:
-        """
-        API endpoint: Update a message.
-        """
+        """Update a message."""
         try:
-            result = self.update_message(
+            result = service.update_message(
                 message_id,
                 subject=request.subject,
                 sender=request.sender,
@@ -250,127 +231,30 @@ class MessagesController:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    async def delete_message_api(self, message_id: str):
-        """
-        API endpoint: Delete a message.
-        """
-        success = self.delete_message(message_id)
+    async def delete_message(
+        self, message_id: str, service: MessagesService = Depends(get_messages_service)
+    ):
+        """Delete a message."""
+        success = service.delete_message(message_id)
         if not success:
             raise HTTPException(status_code=404, detail="Message not found")
 
         return {"message": "Message deleted successfully"}
 
-    # CLI-friendly methods
-
-    def create_message(
-        self,
-        id: str,
-        subject: str,
-        sender: str,
-        to: list[str],
-        snippet: str | None = None,
-        body: str | None = None,
-        date: datetime | None = None,
-    ):
-        """
-        Create a new message.
-
-        Args:
-            id: Unique message ID
-            subject: Message subject
-            sender: Sender email
-            to: List of recipient emails
-            snippet: Short preview text
-            body: Full message body
-            date: Message date
-
-        Returns:
-            MessageResult with the created message
-        """
-        service = MessagesService(self.store)
-        return service.create_message(id, subject, sender, to, snippet, body, date)
-
-    def get_message(self, message_id: str):
-        """
-        Get a message by ID.
-
-        Args:
-            message_id: Message ID
-
-        Returns:
-            MessageResult or None
-        """
-        service = MessagesService(self.store)
-        return service.get_message(message_id)
-
-    def list_messages(self, limit: int | None = None, offset: int | None = None):
-        """
-        List all messages.
-
-        Args:
-            limit: Maximum number of messages to return
-            offset: Number of messages to skip
-
-        Returns:
-            List of Message objects
-        """
-        service = MessagesService(self.store)
-        return service.list_messages(limit=limit, offset=offset)
-
-    def update_message(
+    async def classify_message(
         self,
         message_id: str,
-        subject: str | None = None,
-        sender: str | None = None,
-        to: list[str] | None = None,
-        snippet: str | None = None,
-        body: str | None = None,
-        date: datetime | None = None,
-    ):
-        """
-        Update a message.
-
-        Args:
-            message_id: Message ID
-            subject: New subject (optional)
-            sender: New sender (optional)
-            to: New recipients (optional)
-            snippet: New snippet (optional)
-            body: New body (optional)
-            date: New date (optional)
-
-        Returns:
-            MessageResult or None
-        """
-        service = MessagesService(self.store)
-        return service.update_message(message_id, subject, sender, to, snippet, body, date)
-
-    def delete_message(self, message_id: str) -> bool:
-        """
-        Delete a message.
-
-        Args:
-            message_id: Message ID
-
-        Returns:
-            True if deleted, False if not found
-        """
-        service = MessagesService(self.store)
-        return service.delete_message(message_id)
-
-    async def classify_message_api(
-        self, message_id: str, top_n: int = 3, threshold: float = 0.5
+        top_n: int = Query(config.CLASSIFICATION_TOP_N, description="Maximum number of categories"),
+        threshold: float = Query(
+            config.CLASSIFICATION_THRESHOLD, description="Minimum similarity threshold"
+        ),
+        db_session: Session = Depends(get_db_session),
     ) -> ClassifyResponse:
-        """
-        API endpoint: Classify a message into categories using cosine similarity.
-
-        Args:
-            message_id: Message ID
-            top_n: Maximum number of categories to return
-            threshold: Minimum cosine similarity score (0-1)
-        """
+        """Classify a message into categories using cosine similarity."""
         try:
-            result = self.classify_message(message_id, top_n=top_n, threshold=threshold)
+            # Create classification service with the requested top_n and threshold
+            service = ClassificationService(db_session, top_n=top_n, threshold=threshold)
+            result = service.classify_message_by_id(message_id)
 
             classifications = [
                 CategoryClassification(
@@ -390,22 +274,3 @@ class MessagesController:
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-
-    def classify_message(
-        self, message_id: str, top_n: int = 3, threshold: float = 0.5
-    ) -> ClassificationResult:
-        """
-        Classify a message into categories using cosine similarity.
-
-        Categories are automatically assigned to the message.
-
-        Args:
-            message_id: Message ID
-            top_n: Maximum number of categories to return
-            threshold: Minimum cosine similarity score (0-1)
-
-        Returns:
-            ClassificationResult with matched categories and scores
-        """
-        service = ClassificationService(self.store, top_n=top_n, threshold=threshold)
-        return service.classify_message(message_id)

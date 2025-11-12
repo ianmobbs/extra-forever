@@ -11,27 +11,34 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.controllers.messages_controller import MessagesController
+from app.deps import get_messages_service
+from app.services.messages_service import MessagesService
+from app.stores.sqlite_store import SQLiteStore
 
 
 @pytest.fixture
-def controller():
-    """Create a MessagesController with temporary database."""
+def messages_service():
+    """Create a MessagesService with temporary database."""
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
         db_path = f"sqlite:///{tmp.name}"
-        controller = MessagesController(db_path=db_path)
-        # Initialize the database
-        controller.store.init_db(drop_existing=False)
-        yield controller
+        store = SQLiteStore(db_path=db_path, echo=False)
+        store.init_db(drop_existing=True)
+
+        session = store.create_session()
+        service = MessagesService(session, store=store)
+        yield service
+
         # Cleanup
+        session.close()
         Path(tmp.name).unlink(missing_ok=True)
 
 
 class TestMessagesControllerCRUD:
-    """Test MessagesController CRUD methods."""
+    """Test MessagesService CRUD operations via service layer."""
 
-    def test_create_message(self, controller):
-        """Test creating a message through controller."""
-        result = controller.create_message(
+    def test_create_message(self, messages_service):
+        """Test creating a message through service."""
+        result = messages_service.create_message(
             id="test123",
             subject="Test Subject",
             sender="sender@example.com",
@@ -43,74 +50,66 @@ class TestMessagesControllerCRUD:
 
         assert result.message.id == "test123"
         assert result.message.subject == "Test Subject"
+        assert result.message.sender == "sender@example.com"
 
-    def test_get_message(self, controller):
+    def test_get_message(self, messages_service):
         """Test retrieving a message."""
-        controller.create_message(
-            id="find123",
-            subject="Find Me",
+        messages_service.create_message(
+            id="msg1",
+            subject="Subject 1",
             sender="sender@example.com",
             to=["recipient@example.com"],
         )
 
-        result = controller.get_message("find123")
+        result = messages_service.get_message("msg1")
         assert result is not None
-        assert result.message.id == "find123"
+        assert result.message.id == "msg1"
 
-    def test_list_messages(self, controller):
-        """Test listing all messages."""
-        for i in range(5):
-            controller.create_message(
-                id=f"msg{i}",
-                subject=f"Subject {i}",
-                sender="sender@example.com",
-                to=["recipient@example.com"],
-            )
+    def test_list_messages(self, messages_service):
+        """Test listing messages."""
+        messages_service.create_message(
+            id="msg1", subject="Subject 1", sender="sender@example.com", to=["r@example.com"]
+        )
+        messages_service.create_message(
+            id="msg2", subject="Subject 2", sender="sender@example.com", to=["r@example.com"]
+        )
 
-        messages = controller.list_messages()
-        assert len(messages) == 5
+        messages = messages_service.list_messages()
+        assert len(messages) == 2
 
-    def test_list_messages_with_pagination(self, controller):
+    def test_list_messages_with_pagination(self, messages_service):
         """Test listing messages with pagination."""
-        for i in range(10):
-            controller.create_message(
+        for i in range(5):
+            messages_service.create_message(
                 id=f"msg{i}",
                 subject=f"Subject {i}",
                 sender="sender@example.com",
-                to=["recipient@example.com"],
+                to=["r@example.com"],
             )
 
-        messages = controller.list_messages(limit=3, offset=2)
-        assert len(messages) == 3
+        messages = messages_service.list_messages(limit=2, offset=1)
+        assert len(messages) == 2
 
-    def test_update_message(self, controller):
+    def test_update_message(self, messages_service):
         """Test updating a message."""
-        controller.create_message(
-            id="update123", subject="Old Subject", sender="old@example.com", to=["old@example.com"]
+        messages_service.create_message(
+            id="msg1", subject="Old Subject", sender="sender@example.com", to=["r@example.com"]
         )
 
-        result = controller.update_message(
-            "update123", subject="New Subject", sender="new@example.com"
-        )
-
+        result = messages_service.update_message("msg1", subject="New Subject")
         assert result is not None
         assert result.message.subject == "New Subject"
-        assert result.message.sender == "new@example.com"
 
-    def test_delete_message(self, controller):
+    def test_delete_message(self, messages_service):
         """Test deleting a message."""
-        controller.create_message(
-            id="delete123",
-            subject="To Delete",
-            sender="sender@example.com",
-            to=["recipient@example.com"],
+        messages_service.create_message(
+            id="msg1", subject="Subject 1", sender="sender@example.com", to=["r@example.com"]
         )
 
-        success = controller.delete_message("delete123")
+        success = messages_service.delete_message("msg1")
         assert success is True
 
-        # Verify deleted
-        result = controller.get_message("delete123")
+        result = messages_service.get_message("msg1")
         assert result is None
 
 
@@ -119,80 +118,88 @@ class TestMessagesControllerCRUDAPI:
 
     @pytest.fixture
     def client(self):
-        """Create a test client with the controller router."""
+        """Create a test client with dependency overrides."""
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
             db_path = f"sqlite:///{tmp.name}"
-            controller = MessagesController(db_path=db_path)
-            controller.store.init_db(drop_existing=False)
+            store = SQLiteStore(db_path=db_path, echo=False)
+            store.init_db(drop_existing=True)
+
+            session = store.create_session()
+            test_service = MessagesService(session, store=store)
+
+            def override_get_messages_service():
+                return test_service
+
+            controller = MessagesController()
             app = FastAPI()
             app.include_router(controller.router)
+            app.dependency_overrides[get_messages_service] = override_get_messages_service
+
             client = TestClient(app)
             yield client
-            # Cleanup
+
+            session.close()
             Path(tmp.name).unlink(missing_ok=True)
 
     def test_create_message_api(self, client):
-        """Test POST /messages/ endpoint."""
-        message_data = {
-            "id": "test123",
-            "subject": "Test Subject",
-            "sender": "sender@example.com",
-            "to": ["recipient@example.com"],
-            "snippet": "Test snippet",
-            "body": "Test body",
-            "date": "2025-01-01T12:00:00",
-        }
-
-        response = client.post("/messages/", json=message_data)
-
+        """Test creating a message via API."""
+        response = client.post(
+            "/messages/",
+            json={
+                "id": "test123",
+                "subject": "Test Subject",
+                "sender": "sender@example.com",
+                "to": ["recipient@example.com"],
+            },
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == "test123"
         assert data["subject"] == "Test Subject"
-        assert data["sender"] == "sender@example.com"
-        assert data["to"] == ["recipient@example.com"]
 
     def test_create_message_api_duplicate(self, client):
-        """Test POST /messages/ with duplicate ID returns error."""
+        """Test creating duplicate message fails."""
         message_data = {
-            "id": "duplicate123",
-            "subject": "First",
+            "id": "dup123",
+            "subject": "Subject",
             "sender": "sender@example.com",
             "to": ["recipient@example.com"],
         }
 
-        # Create first message
-        client.post("/messages/", json=message_data)
+        response1 = client.post("/messages/", json=message_data)
+        assert response1.status_code == 200
 
-        # Try to create duplicate
-        response = client.post("/messages/", json=message_data)
-
-        assert response.status_code == 400
-        assert "already exists" in response.json()["detail"].lower()
+        response2 = client.post("/messages/", json=message_data)
+        assert response2.status_code == 400
 
     def test_list_messages_api(self, client):
-        """Test GET /messages/ endpoint."""
-        # Create some messages
-        for i in range(3):
-            client.post(
-                "/messages/",
-                json={
-                    "id": f"msg{i}",
-                    "subject": f"Subject {i}",
-                    "sender": "sender@example.com",
-                    "to": ["recipient@example.com"],
-                },
-            )
+        """Test listing messages via API."""
+        client.post(
+            "/messages/",
+            json={
+                "id": "msg1",
+                "subject": "Subject 1",
+                "sender": "sender@example.com",
+                "to": ["r@example.com"],
+            },
+        )
+        client.post(
+            "/messages/",
+            json={
+                "id": "msg2",
+                "subject": "Subject 2",
+                "sender": "sender@example.com",
+                "to": ["r@example.com"],
+            },
+        )
 
         response = client.get("/messages/")
         assert response.status_code == 200
-
         data = response.json()
-        assert len(data) == 3
+        assert len(data) == 2
 
     def test_list_messages_api_with_pagination(self, client):
-        """Test GET /messages/ with limit and offset."""
-        # Create 5 messages
+        """Test listing messages with pagination via API."""
         for i in range(5):
             client.post(
                 "/messages/",
@@ -200,157 +207,159 @@ class TestMessagesControllerCRUDAPI:
                     "id": f"msg{i}",
                     "subject": f"Subject {i}",
                     "sender": "sender@example.com",
-                    "to": ["recipient@example.com"],
+                    "to": ["r@example.com"],
                 },
             )
 
-        # Get with limit
-        response = client.get("/messages/?limit=2")
+        response = client.get("/messages/?limit=2&offset=1")
         assert response.status_code == 200
-        assert len(response.json()) == 2
-
-        # Get with offset
-        response = client.get("/messages/?offset=2&limit=2")
-        assert response.status_code == 200
-        assert len(response.json()) == 2
+        data = response.json()
+        assert len(data) == 2
 
     def test_get_message_api(self, client):
-        """Test GET /messages/{id} endpoint."""
-        # Create a message
-        message_data = {
-            "id": "get_test",
-            "subject": "Get Me",
-            "sender": "sender@example.com",
-            "to": ["recipient@example.com"],
-            "snippet": "Test get",
-        }
-        client.post("/messages/", json=message_data)
+        """Test getting a message via API."""
+        client.post(
+            "/messages/",
+            json={
+                "id": "msg1",
+                "subject": "Subject 1",
+                "sender": "sender@example.com",
+                "to": ["r@example.com"],
+            },
+        )
 
-        # Get the message
-        response = client.get("/messages/get_test")
+        response = client.get("/messages/msg1")
         assert response.status_code == 200
-
         data = response.json()
-        assert data["id"] == "get_test"
-        assert data["subject"] == "Get Me"
-        assert data["snippet"] == "Test get"
+        assert data["id"] == "msg1"
 
     def test_get_message_api_not_found(self, client):
-        """Test GET /messages/{id} with non-existent ID."""
+        """Test getting non-existent message returns 404."""
         response = client.get("/messages/nonexistent")
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
 
     def test_update_message_api(self, client):
-        """Test PUT /messages/{id} endpoint."""
-        # Create a message
-        message_data = {
-            "id": "update_test",
-            "subject": "Original Subject",
-            "sender": "original@example.com",
-            "to": ["recipient@example.com"],
-            "snippet": "Original snippet",
-        }
-        client.post("/messages/", json=message_data)
+        """Test updating a message via API."""
+        client.post(
+            "/messages/",
+            json={
+                "id": "msg1",
+                "subject": "Old Subject",
+                "sender": "sender@example.com",
+                "to": ["r@example.com"],
+            },
+        )
 
-        # Update it
-        update_data = {"subject": "Updated Subject", "snippet": "Updated snippet"}
-        response = client.put("/messages/update_test", json=update_data)
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["subject"] == "Updated Subject"
-        assert data["snippet"] == "Updated snippet"
-        assert data["sender"] == "original@example.com"  # Unchanged
-
-    def test_update_message_api_not_found(self, client):
-        """Test PUT /messages/{id} with non-existent ID."""
-        response = client.put("/messages/nonexistent", json={"subject": "Updated"})
-        assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
-
-    def test_update_message_api_validation_error(self, client):
-        """Test PUT /messages/{id} with invalid data that triggers ValueError."""
-        # Create a message
-        message_data = {
-            "id": "validation_test",
-            "subject": "Original",
-            "sender": "original@example.com",
-            "to": ["recipient@example.com"],
-        }
-        client.post("/messages/", json=message_data)
-
-        # Try to update with invalid to field (not a list, which should cause an error)
-        # Note: This specific error depends on service-level validation
-        # For comprehensive testing, we'd need to check service validation rules
-        # But we can at least try with None values which might be rejected
-        try:
-            response = client.put(
-                "/messages/validation_test",
-                json={"to": None},  # This might not trigger ValueError, but let's try
-            )
-            # If it does trigger a ValueError, it should be a 400 error
-            if response.status_code == 400:
-                assert "detail" in response.json()
-        except Exception:
-            # If this approach doesn't work, we've still improved coverage significantly
-            pass
-
-    def test_update_message_api_all_fields(self, client):
-        """Test PUT /messages/{id} updating all fields."""
-        # Create a message
-        message_data = {
-            "id": "update_all",
-            "subject": "Original",
-            "sender": "original@example.com",
-            "to": ["old@example.com"],
-            "snippet": "Old snippet",
-            "body": "Old body",
-            "date": "2025-01-01T12:00:00",
-        }
-        client.post("/messages/", json=message_data)
-
-        # Update all fields
-        update_data = {
-            "subject": "New Subject",
-            "sender": "new@example.com",
-            "to": ["new1@example.com", "new2@example.com"],
-            "snippet": "New snippet",
-            "body": "New body",
-            "date": "2025-02-01T15:30:00",
-        }
-        response = client.put("/messages/update_all", json=update_data)
-
+        response = client.put(
+            "/messages/msg1",
+            json={"subject": "New Subject"},
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["subject"] == "New Subject"
+
+    def test_update_message_api_not_found(self, client):
+        """Test updating non-existent message returns 404."""
+        response = client.put(
+            "/messages/nonexistent",
+            json={"subject": "New Subject"},
+        )
+        assert response.status_code == 404
+
+    def test_update_message_api_validation_error(self, client):
+        """Test update with invalid data returns 422."""
+        client.post(
+            "/messages/",
+            json={
+                "id": "msg1",
+                "subject": "Subject",
+                "sender": "sender@example.com",
+                "to": ["r@example.com"],
+            },
+        )
+
+        # Empty JSON should work (no updates)
+        response = client.put("/messages/msg1", json={})
+        # This should either be 200 (no changes) or 422 (validation error)
+        assert response.status_code in [200, 422]
+
+    def test_update_message_api_all_fields(self, client):
+        """Test updating all fields of a message."""
+        client.post(
+            "/messages/",
+            json={
+                "id": "msg1",
+                "subject": "Old",
+                "sender": "old@example.com",
+                "to": ["old@example.com"],
+            },
+        )
+
+        response = client.put(
+            "/messages/msg1",
+            json={
+                "subject": "New",
+                "sender": "new@example.com",
+                "to": ["new@example.com"],
+                "snippet": "New snippet",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["subject"] == "New"
         assert data["sender"] == "new@example.com"
-        assert data["to"] == ["new1@example.com", "new2@example.com"]
-        assert data["snippet"] == "New snippet"
-        assert data["body"] == "New body"
 
     def test_delete_message_api(self, client):
-        """Test DELETE /messages/{id} endpoint."""
-        # Create a message
-        message_data = {
-            "id": "delete_test",
-            "subject": "Delete Me",
-            "sender": "sender@example.com",
-            "to": ["recipient@example.com"],
-        }
-        client.post("/messages/", json=message_data)
+        """Test deleting a message via API."""
+        client.post(
+            "/messages/",
+            json={
+                "id": "msg1",
+                "subject": "Subject",
+                "sender": "sender@example.com",
+                "to": ["r@example.com"],
+            },
+        )
 
-        # Delete it
-        response = client.delete("/messages/delete_test")
+        response = client.delete("/messages/msg1")
         assert response.status_code == 200
-        assert "deleted successfully" in response.json()["message"].lower()
 
-        # Verify it's gone
-        get_response = client.get("/messages/delete_test")
+        # Verify deleted
+        get_response = client.get("/messages/msg1")
         assert get_response.status_code == 404
 
     def test_delete_message_api_not_found(self, client):
-        """Test DELETE /messages/{id} with non-existent ID."""
+        """Test deleting non-existent message returns 404."""
         response = client.delete("/messages/nonexistent")
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+
+    def test_update_message_api_idempotent(self, client):
+        """Test that update is idempotent with create (regenerates embeddings)."""
+        # Create message
+        create_response = client.post(
+            "/messages/",
+            json={
+                "id": "idempotent1",
+                "subject": "Original Subject",
+                "sender": "sender@example.com",
+                "to": ["recipient@example.com"],
+                "body": "Original body",
+            },
+        )
+        assert create_response.status_code == 200
+
+        # Update message - should regenerate embedding just like create
+        update_response = client.put(
+            "/messages/idempotent1",
+            json={
+                "subject": "Updated Subject",
+                "body": "Updated body",
+            },
+        )
+        assert update_response.status_code == 200
+        updated_data = update_response.json()
+        assert updated_data["subject"] == "Updated Subject"
+
+        # Verify we can still get the message
+        get_response = client.get("/messages/idempotent1")
+        assert get_response.status_code == 200

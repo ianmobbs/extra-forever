@@ -4,7 +4,6 @@ Message manager for CRUD operations on Message entities.
 
 from datetime import datetime
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from models import Message
@@ -39,23 +38,19 @@ class MessageManager:
             embedding=embedding,
         )
         self.session.add(message)
-        try:
-            self.session.commit()
-            # Re-query with eager loading to ensure categories are loaded
-            return (
-                self.session.query(Message)
-                .options(joinedload(Message.categories))
-                .filter(Message.id == id)
-                .first()
-            )
-        except IntegrityError as e:
-            self.session.rollback()
-            raise ValueError(f"Message with id '{id}' already exists") from e
+        self.session.flush()  # Flush to catch IntegrityError before commit
+        # Re-query with eager loading to ensure categories are loaded
+        return (
+            self.session.query(Message)
+            .options(joinedload(Message.categories))
+            .filter(Message.id == id)
+            .first()
+        )
 
     def bulk_create(self, messages: list[Message]) -> None:
         """Bulk insert messages into the database."""
         self.session.add_all(messages)
-        self.session.commit()
+        self.session.flush()  # Flush to ensure messages are staged
 
     def get_by_id(self, message_id: str) -> Message | None:
         """Get a message by ID."""
@@ -114,7 +109,7 @@ class MessageManager:
         if embedding is not None:
             message.embedding = embedding
 
-        self.session.commit()
+        self.session.flush()  # Flush to ensure updates are staged
         # Re-query with eager loading
         return (
             self.session.query(Message)
@@ -130,7 +125,7 @@ class MessageManager:
             return False
 
         self.session.delete(message)
-        self.session.commit()
+        self.session.flush()  # Flush to ensure delete is staged
         return True
 
     def count(self) -> int:

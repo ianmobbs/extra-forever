@@ -4,21 +4,25 @@ Embedding service for generating text embeddings using OpenAI API.
 
 from openai import OpenAI
 
+from app.config import config
 from models import Category, Message
 
 
 class EmbeddingService:
     """Service for generating embeddings using OpenAI's API."""
 
-    def __init__(self, api_key: str | None = None):
+    def __init__(self, api_key: str | None = None, model: str | None = None):
         """
         Initialize the embedding service.
 
         Args:
-            api_key: OpenAI API key (if None, will use OPENAI_API_KEY env var)
+            api_key: OpenAI API key (if None, will use config.OPENAI_API_KEY or OPENAI_API_KEY env var)
+            model: Embedding model to use (if None, will use config.EMBEDDING_MODEL)
         """
-        self.client = OpenAI(api_key=api_key) if api_key else OpenAI()
-        self.model = "text-embedding-ada-002"
+        # Use provided api_key, or fall back to config, or let OpenAI client use env var
+        key = api_key if api_key is not None else config.OPENAI_API_KEY
+        self.client = OpenAI(api_key=key) if key else OpenAI()
+        self.model = model if model is not None else config.EMBEDDING_MODEL
 
     def embed_message(self, message: Message) -> list[float]:
         """

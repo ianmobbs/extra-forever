@@ -1,0 +1,5 @@
+- The project uses `uv` for package and Python version management
+- Always use your task planner or TODO list tools to track your work
+- Always add tests - general unit tests for new behavior, and integration-like tests at the controller level when relevant for different scenarios
+- When you're done, run `uv run pytest` to ensure tests pass
+- Finally, run `ruff format` and ensure both `ruff` and `mypy` are green

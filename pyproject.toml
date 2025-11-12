@@ -101,6 +101,7 @@ unfixable = []
 [tool.ruff.lint.per-file-ignores]
 "cli.py" = ["B008"]  # Allow typer.Option/Argument in defaults
 "app/controllers/*.py" = ["B008"]  # Allow FastAPI Form/File in defaults
+"app/deps.py" = ["B008"]  # Allow FastAPI Depends in defaults
 
 [tool.ruff.format]
 # Use double quotes for strings

@@ -15,6 +15,7 @@ class TestMessageManager:
 
         messages = [sample_message]
         manager.bulk_create(messages)
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         # Verify message was added
         count = db_session.query(Message).count()
@@ -39,6 +40,7 @@ class TestMessageManager:
         ]
 
         manager.bulk_create(messages)
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         count = db_session.query(Message).count()
         assert count == 5
@@ -59,6 +61,7 @@ class TestMessageManager:
             for i in range(10)
         ]
         manager.bulk_create(messages)
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         # Get first 5
         first_five = manager.get_first_n(5)
@@ -80,6 +83,7 @@ class TestMessageManager:
             for i in range(3)
         ]
         manager.bulk_create(messages)
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         # Request 10 but only 3 exist
         result = manager.get_first_n(10)
@@ -102,5 +106,6 @@ class TestMessageManager:
             for i in range(7)
         ]
         manager.bulk_create(messages)
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         assert manager.count() == 7

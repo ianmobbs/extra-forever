@@ -1,11 +1,12 @@
 """
-Tests for app/services/classification_service.py
+Tests for app/services/classification/classification_service.py
 """
 
 import pytest
 
 from app.services.categories_service import CategoriesService
-from app.services.classification_service import ClassificationResult, ClassificationService
+from app.services.classification import ClassificationResult, ClassificationService
+from app.services.classification.strategies import EmbeddingSimilarityStrategy
 from app.services.messages_service import MessagesService
 from models import Category, Message
 
@@ -37,23 +38,23 @@ class TestClassificationResult:
 class TestClassificationService:
     """Test ClassificationService class."""
 
-    def test_service_initialization(self, sqlite_store):
+    def test_service_initialization(self, db_session):
         """Test service can be initialized with default parameters."""
-        service = ClassificationService(sqlite_store)
-        assert service.store == sqlite_store
+        service = ClassificationService(db_session)
+        assert service.db_session == db_session
         assert service.top_n == 3
         assert service.threshold == 0.5
 
-    def test_service_initialization_with_params(self, sqlite_store):
+    def test_service_initialization_with_params(self, db_session):
         """Test service can be initialized with custom parameters."""
-        service = ClassificationService(sqlite_store, top_n=5, threshold=0.7)
+        service = ClassificationService(db_session, top_n=5, threshold=0.7)
         assert service.top_n == 5
         assert service.threshold == 0.7
 
-    def test_classify_message_basic(self, sqlite_store, mock_embedding_service):
+    def test_classify_message_basic(self, db_session, mock_embedding_service):
         """Test basic message classification."""
         # Create message with embedding
-        messages_service = MessagesService(sqlite_store, mock_embedding_service)
+        messages_service = MessagesService(db_session, mock_embedding_service)
         messages_service.create_message(
             id="msg1",
             subject="Important work deadline",
@@ -64,15 +65,15 @@ class TestClassificationService:
         )
 
         # Create categories with embeddings
-        categories_service = CategoriesService(sqlite_store, mock_embedding_service)
+        categories_service = CategoriesService(db_session, mock_embedding_service)
         categories_service.create_category(name="Work", description="Work-related emails and tasks")
         categories_service.create_category(
             name="Personal", description="Personal emails from friends and family"
         )
 
         # Classify
-        service = ClassificationService(sqlite_store, top_n=2, threshold=0.0)
-        result = service.classify_message("msg1")
+        service = ClassificationService(db_session, top_n=2, threshold=0.0)
+        result = service.classify_message_by_id("msg1")
 
         assert isinstance(result, ClassificationResult)
         assert result.message.id == "msg1"
@@ -88,12 +89,12 @@ class TestClassificationService:
             assert isinstance(explanation, str)
             assert len(explanation) > 0
 
-    def test_classify_message_not_found(self, sqlite_store):
+    def test_classify_message_not_found(self, db_session):
         """Test classify with non-existent message."""
-        service = ClassificationService(sqlite_store)
+        service = ClassificationService(db_session)
 
         with pytest.raises(ValueError, match=r"Message with ID .* not found"):
-            service.classify_message("nonexistent")
+            service.classify_message_by_id("nonexistent")
 
     def test_classify_message_no_embedding(self, sqlite_store, db_session):
         """Test classify with message that has no embedding."""
@@ -108,25 +109,25 @@ class TestClassificationService:
         db_session.add(message)
         db_session.commit()
 
-        service = ClassificationService(sqlite_store)
+        service = ClassificationService(db_session)
 
         with pytest.raises(ValueError, match="has no embedding"):
-            service.classify_message("msg_no_embed")
+            service.classify_message_by_id("msg_no_embed")
 
-    def test_classify_message_no_categories(self, sqlite_store, mock_embedding_service):
+    def test_classify_message_no_categories(self, db_session, mock_embedding_service):
         """Test classify when no categories exist."""
         # Create message with embedding
-        messages_service = MessagesService(sqlite_store, mock_embedding_service)
+        messages_service = MessagesService(db_session, mock_embedding_service)
         messages_service.create_message(
             id="msg1", subject="Test", sender="test@example.com", to=["recipient@example.com"]
         )
 
-        service = ClassificationService(sqlite_store)
+        service = ClassificationService(db_session)
 
         with pytest.raises(ValueError, match="No categories with embeddings found"):
-            service.classify_message("msg1")
+            service.classify_message_by_id("msg1")
 
-    def test_classify_message_respects_threshold(self, sqlite_store, db_session):
+    def test_classify_message_respects_threshold(self, db_session):
         """Test that classification respects similarity threshold."""
         # Create message with specific embedding
         message_embedding = [1.0] + [0.0] * 1535
@@ -151,15 +152,15 @@ class TestClassificationService:
         db_session.commit()
 
         # Use high threshold - should not match
-        service = ClassificationService(sqlite_store, top_n=10, threshold=0.9)
-        result = service.classify_message("msg1")
+        service = ClassificationService(db_session, top_n=10, threshold=0.9)
+        result = service.classify_message_by_id("msg1")
 
         # Should have no matches above threshold
         assert len(result.matched_categories) == 0
         assert len(result.scores) == 0
         assert len(result.explanations) == 0
 
-    def test_classify_message_respects_top_n(self, sqlite_store, db_session):
+    def test_classify_message_respects_top_n(self, db_session):
         """Test that classification respects top_n limit."""
         # Create message
         message_embedding = [1.0, 1.0] + [0.0] * 1534
@@ -185,15 +186,15 @@ class TestClassificationService:
         db_session.commit()
 
         # Set top_n to 3
-        service = ClassificationService(sqlite_store, top_n=3, threshold=0.0)
-        result = service.classify_message("msg1")
+        service = ClassificationService(db_session, top_n=3, threshold=0.0)
+        result = service.classify_message_by_id("msg1")
 
         # Should only return 3 categories
         assert len(result.matched_categories) == 3
         assert len(result.scores) == 3
         assert len(result.explanations) == 3
 
-    def test_classify_message_scores_sorted_descending(self, sqlite_store, db_session):
+    def test_classify_message_scores_sorted_descending(self, db_session):
         """Test that results are sorted by score in descending order."""
         # Create message
         message_embedding = [1.0, 0.0] + [0.0] * 1534
@@ -221,8 +222,8 @@ class TestClassificationService:
         db_session.add_all([cat1, cat2, cat3])
         db_session.commit()
 
-        service = ClassificationService(sqlite_store, top_n=10, threshold=0.0)
-        result = service.classify_message("msg1")
+        service = ClassificationService(db_session, top_n=10, threshold=0.0)
+        result = service.classify_message_by_id("msg1")
 
         # Scores should be in descending order
         for i in range(len(result.scores) - 1):
@@ -231,19 +232,19 @@ class TestClassificationService:
     def test_classify_and_assign(self, sqlite_store, mock_embedding_service, db_session):
         """Test classify_and_assign persists relationships."""
         # Create message
-        messages_service = MessagesService(sqlite_store, mock_embedding_service)
+        messages_service = MessagesService(db_session, mock_embedding_service)
         messages_service.create_message(
             id="msg1", subject="Work email", sender="boss@company.com", to=["employee@company.com"]
         )
 
         # Create categories
-        categories_service = CategoriesService(sqlite_store, mock_embedding_service)
+        categories_service = CategoriesService(db_session, mock_embedding_service)
         categories_service.create_category(name="Work", description="Work emails")
         categories_service.create_category(name="Personal", description="Personal emails")
 
         # Classify and assign
-        service = ClassificationService(sqlite_store, top_n=2, threshold=0.0)
-        result = service.classify_message("msg1")
+        service = ClassificationService(db_session, top_n=2, threshold=0.0)
+        result = service.classify_message_by_id("msg1")
 
         # Verify result
         assert len(result.matched_categories) > 0
@@ -272,13 +273,13 @@ class TestClassificationService:
     ):
         """Test that classify_and_assign clears previous category assignments."""
         # Create message
-        messages_service = MessagesService(sqlite_store, mock_embedding_service)
+        messages_service = MessagesService(db_session, mock_embedding_service)
         messages_service.create_message(
             id="msg1", subject="Test", sender="test@example.com", to=["recipient@example.com"]
         )
 
         # Create categories
-        categories_service = CategoriesService(sqlite_store, mock_embedding_service)
+        categories_service = CategoriesService(db_session, mock_embedding_service)
         cat1 = categories_service.create_category(name="Category1", description="First category")
         categories_service.create_category(name="Category2", description="Second category")
 
@@ -311,8 +312,8 @@ class TestClassificationService:
             session.close()
 
         # Now classify and assign (should replace previous assignments)
-        service = ClassificationService(sqlite_store, top_n=2, threshold=0.0)
-        result = service.classify_message("msg1")
+        service = ClassificationService(db_session, top_n=2, threshold=0.0)
+        result = service.classify_message_by_id("msg1")
 
         result_cat_count = len(result.matched_categories)
 
@@ -327,8 +328,8 @@ class TestClassificationService:
             session.close()
 
     def test_compute_similarity_basic(self, sqlite_store):
-        """Test _compute_similarity with simple vectors."""
-        service = ClassificationService(sqlite_store)
+        """Test strategy compute_similarity with simple vectors."""
+        strategy = EmbeddingSimilarityStrategy()
 
         # Create identical vectors (should have similarity ~1.0)
         message = Message(
@@ -343,17 +344,15 @@ class TestClassificationService:
             id=1, name="Match", description="Should match", embedding=[1.0, 0.0, 0.0]
         )
 
-        matched_cats, scores, explanations = service._compute_similarity(message, [category])
+        matches = strategy.classify(message, [category], top_n=10, threshold=0.5)
 
-        assert len(matched_cats) == 1
-        assert len(scores) == 1
-        assert len(explanations) == 1
-        assert scores[0] == pytest.approx(1.0, abs=0.01)
-        assert isinstance(explanations[0], str)
+        assert len(matches) == 1
+        assert matches[0].score == pytest.approx(1.0, abs=0.01)
+        assert isinstance(matches[0].explanation, str)
 
     def test_compute_similarity_orthogonal_vectors(self, sqlite_store):
-        """Test _compute_similarity with orthogonal vectors (should be ~0)."""
-        service = ClassificationService(sqlite_store, threshold=0.0)
+        """Test strategy compute_similarity with orthogonal vectors (should be ~0)."""
+        strategy = EmbeddingSimilarityStrategy()
 
         # Orthogonal vectors (should have similarity ~0.0)
         message = Message(
@@ -368,15 +367,14 @@ class TestClassificationService:
             id=1, name="Orthogonal", description="Should be orthogonal", embedding=[0.0, 1.0, 0.0]
         )
 
-        matched_cats, scores, explanations = service._compute_similarity(message, [category])
+        matches = strategy.classify(message, [category], top_n=10, threshold=0.0)
 
-        assert len(matched_cats) == 1
-        assert len(explanations) == 1
-        assert scores[0] == pytest.approx(0.0, abs=0.01)
+        assert len(matches) == 1
+        assert matches[0].score == pytest.approx(0.0, abs=0.01)
 
     def test_compute_similarity_opposite_vectors(self, sqlite_store):
-        """Test _compute_similarity with opposite vectors (should be ~-1)."""
-        service = ClassificationService(sqlite_store, threshold=-1.0)
+        """Test strategy compute_similarity with opposite vectors (should be ~-1)."""
+        strategy = EmbeddingSimilarityStrategy()
 
         # Opposite vectors (should have similarity ~-1.0)
         message = Message(
@@ -391,15 +389,14 @@ class TestClassificationService:
             id=1, name="Opposite", description="Should be opposite", embedding=[-1.0, 0.0, 0.0]
         )
 
-        matched_cats, scores, explanations = service._compute_similarity(message, [category])
+        matches = strategy.classify(message, [category], top_n=10, threshold=-1.0)
 
-        assert len(matched_cats) == 1
-        assert len(explanations) == 1
-        assert scores[0] == pytest.approx(-1.0, abs=0.01)
+        assert len(matches) == 1
+        assert matches[0].score == pytest.approx(-1.0, abs=0.01)
 
     def test_compute_similarity_multiple_categories(self, sqlite_store):
-        """Test _compute_similarity with multiple categories."""
-        service = ClassificationService(sqlite_store, top_n=10, threshold=0.0)
+        """Test strategy compute_similarity with multiple categories."""
+        strategy = EmbeddingSimilarityStrategy()
 
         message = Message(
             id="msg1",
@@ -415,12 +412,10 @@ class TestClassificationService:
             Category(id=3, name="Cat3", description="Low similarity", embedding=[0.0, 1.0, 0.0]),
         ]
 
-        matched_cats, scores, explanations = service._compute_similarity(message, categories)
+        matches = strategy.classify(message, categories, top_n=10, threshold=0.0)
 
-        assert len(matched_cats) == 3
-        assert len(scores) == 3
-        assert len(explanations) == 3
+        assert len(matches) == 3
         # Scores should be sorted descending
-        assert scores[0] >= scores[1] >= scores[2]
+        assert matches[0].score >= matches[1].score >= matches[2].score
         # First should be highest (identical vectors)
-        assert scores[0] == pytest.approx(1.0, abs=0.01)
+        assert matches[0].score == pytest.approx(1.0, abs=0.01)

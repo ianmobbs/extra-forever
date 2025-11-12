@@ -3,6 +3,7 @@ Tests for app/managers/category_manager.py
 """
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.managers.category_manager import CategoryManager
 from models import Category
@@ -18,6 +19,7 @@ class TestCategoryManager:
         category = manager.create(
             name="Work Travel", description="Work-related travel receipts from airlines"
         )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         assert category.id is not None
         assert category.name == "Work Travel"
@@ -32,17 +34,17 @@ class TestCategoryManager:
         manager = CategoryManager(db_session)
 
         manager.create(name="Unique", description="First")
+        db_session.commit()  # Commit is now done by caller (service layer)
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(IntegrityError):  # IntegrityError from flush
             manager.create(name="Unique", description="Second")
-
-        assert "already exists" in str(exc_info.value)
 
     def test_get_by_id(self, db_session):
         """Test get_by_id retrieves correct category."""
         manager = CategoryManager(db_session)
 
         created = manager.create(name="Test", description="Test category")
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         retrieved = manager.get_by_id(created.id)
         assert retrieved is not None
@@ -61,6 +63,7 @@ class TestCategoryManager:
         manager = CategoryManager(db_session)
 
         manager.create(name="FindMe", description="Test")
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         retrieved = manager.get_by_name("FindMe")
         assert retrieved is not None
@@ -80,6 +83,7 @@ class TestCategoryManager:
         manager.create(name="Cat1", description="First")
         manager.create(name="Cat2", description="Second")
         manager.create(name="Cat3", description="Third")
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         all_categories = manager.get_all()
         assert len(all_categories) == 3
@@ -97,8 +101,10 @@ class TestCategoryManager:
         manager = CategoryManager(db_session)
 
         category = manager.create(name="OldName", description="Description")
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         updated = manager.update(category.id, name="NewName")
+        db_session.commit()  # Commit is now done by caller (service layer)
         assert updated is not None
         assert updated.name == "NewName"
         assert updated.description == "Description"
@@ -108,8 +114,10 @@ class TestCategoryManager:
         manager = CategoryManager(db_session)
 
         category = manager.create(name="Name", description="Old description")
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         updated = manager.update(category.id, description="New description")
+        db_session.commit()  # Commit is now done by caller (service layer)
         assert updated is not None
         assert updated.name == "Name"
         assert updated.description == "New description"
@@ -119,8 +127,10 @@ class TestCategoryManager:
         manager = CategoryManager(db_session)
 
         category = manager.create(name="OldName", description="Old description")
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         updated = manager.update(category.id, name="NewName", description="New description")
+        db_session.commit()  # Commit is now done by caller (service layer)
         assert updated is not None
         assert updated.name == "NewName"
         assert updated.description == "New description"
@@ -133,25 +143,26 @@ class TestCategoryManager:
         assert result is None
 
     def test_update_duplicate_name_raises_error(self, db_session):
-        """Test updating to duplicate name raises ValueError."""
+        """Test updating to duplicate name raises IntegrityError on flush."""
         manager = CategoryManager(db_session)
 
         cat1 = manager.create(name="First", description="First category")
         manager.create(name="Second", description="Second category")
+        db_session.commit()  # Commit is now done by caller (service layer)
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(IntegrityError):  # IntegrityError from flush
             manager.update(cat1.id, name="Second")
-
-        assert "already exists" in str(exc_info.value)
 
     def test_delete(self, db_session):
         """Test deleting a category."""
         manager = CategoryManager(db_session)
 
         category = manager.create(name="ToDelete", description="Will be deleted")
+        db_session.commit()  # Commit is now done by caller (service layer)
         category_id = category.id
 
         success = manager.delete(category_id)
+        db_session.commit()  # Commit is now done by caller (service layer)
         assert success is True
 
         # Verify deleted
@@ -174,5 +185,6 @@ class TestCategoryManager:
         manager.create(name="Cat1", description="First")
         manager.create(name="Cat2", description="Second")
         manager.create(name="Cat3", description="Third")
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         assert manager.count() == 3

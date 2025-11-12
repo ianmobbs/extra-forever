@@ -6,10 +6,12 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
-from app.controllers.bootstrap_controller import BootstrapController
-from app.controllers.categories_controller import CategoriesController
-from app.controllers.messages_controller import MessagesController
-from app.services.messages_service import ClassificationOptions, ImportOptions
+from app.config import config
+from app.services.bootstrap_service import BootstrapService
+from app.services.categories_service import CategoriesService
+from app.services.classification import ClassificationService
+from app.services.messages_service import ClassificationOptions, ImportOptions, MessagesService
+from app.stores.sqlite_store import SQLiteStore
 
 app = typer.Typer(
     name="extra",
@@ -18,11 +20,74 @@ app = typer.Typer(
 )
 console = Console()
 
-SQLITE_DB_PATH = "sqlite:///messages.db"
+# Initialize shared store (lazily)
+_store = SQLiteStore(db_path=config.DATABASE_URL, echo=config.DATABASE_ECHO)
+_store.init_db(drop_existing=False)  # Initialize tables without dropping
 
 # Create command groups
 messages_app = typer.Typer(help="Message management commands")
 category_app = typer.Typer(help="Category management commands")
+
+
+# Helper functions to create service instances with fresh sessions
+def _create_messages_service(with_classification: bool = False):
+    """Create a MessagesService with a fresh session.
+
+    Args:
+        with_classification: Whether to inject a classification service
+
+    Returns:
+        Tuple of (MessagesService, list of sessions to close)
+    """
+    session = _store.create_session()
+    sessions = [session]
+
+    classification_service = None
+    if with_classification:
+        # Create a separate session for classification service
+        class_session = _store.create_session()
+        sessions.append(class_session)
+        classification_service = ClassificationService(
+            class_session,
+            top_n=config.CLASSIFICATION_TOP_N,
+            threshold=config.CLASSIFICATION_THRESHOLD,
+        )
+
+    return MessagesService(
+        session, classification_service=classification_service, store=_store
+    ), sessions
+
+
+def _create_categories_service():
+    """Create a CategoriesService with a fresh session."""
+    session = _store.create_session()
+    return CategoriesService(session), session
+
+
+def _create_classification_service(top_n: int | None = None, threshold: float | None = None):
+    """Create a ClassificationService with a fresh session."""
+    session = _store.create_session()
+    return (
+        ClassificationService(
+            session,
+            top_n=top_n if top_n is not None else config.CLASSIFICATION_TOP_N,
+            threshold=threshold if threshold is not None else config.CLASSIFICATION_THRESHOLD,
+        ),
+        session,
+    )
+
+
+def _create_bootstrap_service():
+    """Create a BootstrapService with fresh sessions for its dependencies."""
+    # Bootstrap needs classification support for auto-classify
+    messages_service, msg_sessions = _create_messages_service(with_classification=True)
+    categories_service, cat_session = _create_categories_service()
+
+    # Combine all sessions for cleanup
+    all_sessions = [*msg_sessions, cat_session]
+
+    return BootstrapService(_store, messages_service, categories_service), all_sessions
+
 
 # Register command groups
 app.add_typer(messages_app, name="messages")
@@ -96,6 +161,8 @@ def bootstrap_system(
             f"[cyan]Auto-classification enabled (top_n={classification_top_n}, threshold={classification_threshold})[/cyan]\n"
         )
 
+    bootstrap_service, sessions = _create_bootstrap_service()
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -104,13 +171,12 @@ def bootstrap_system(
         task = progress.add_task("Loading data...", total=None)
 
         try:
-            controller = BootstrapController(db_path=SQLITE_DB_PATH)
             classification_opts = ClassificationOptions(
                 auto_classify=auto_classify,
                 top_n=classification_top_n,
                 threshold=classification_threshold,
             )
-            result = controller.bootstrap(
+            result = bootstrap_service.bootstrap(
                 messages_file=messages_file,
                 categories_file=categories_file,
                 drop_existing=drop_existing,
@@ -119,6 +185,9 @@ def bootstrap_system(
             progress.update(task, description="Complete!")
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {e}")
+            # Clean up sessions on error
+            for session in sessions:
+                session.close()
             raise typer.Exit(code=1) from e
 
     console.print("\n[bold green]✓[/bold green] Successfully bootstrapped system")
@@ -178,33 +247,38 @@ def bootstrap_system(
             console.print(Panel.fit("[bold]Classification Details[/bold]", border_style="cyan"))
 
             # Re-classify preview messages to get detailed explanations
-            controller = MessagesController(db_path=SQLITE_DB_PATH)
-            for msg in result.preview_messages[:3]:  # Show details for first 3 messages
-                if msg.categories:
-                    console.print(f"\n[bold cyan]Message:[/bold cyan] {msg.subject[:60]}")
-                    # Get classification details with explanations
-                    try:
-                        classification = controller.classify_message(
-                            msg.id, top_n=classification_top_n, threshold=classification_threshold
-                        )
-                        for cat, score, explanation in zip(
-                            classification.matched_categories,
-                            classification.scores,
-                            classification.explanations,
-                            strict=True,
-                        ):
-                            console.print(
-                                f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta] "
-                                f"(score: {score:.4f})"
-                            )
-                            console.print(f"    [dim]{explanation}[/dim]")
-                    except Exception:
-                        # Fallback to simple category listing if classification fails
-                        for cat in msg.categories:
-                            console.print(
-                                f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta]"
-                            )
-                    console.print()
+            classification_service, class_session = _create_classification_service()
+            try:
+                for msg in result.preview_messages[:3]:  # Show details for first 3 messages
+                    if msg.categories:
+                        console.print(f"\n[bold cyan]Message:[/bold cyan] {msg.subject[:60]}")
+                        # Get classification details with explanations
+                        try:
+                            classification = classification_service.classify_message_by_id(msg.id)
+                            for cat, score, explanation in zip(
+                                classification.matched_categories,
+                                classification.scores,
+                                classification.explanations,
+                                strict=True,
+                            ):
+                                console.print(
+                                    f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta] "
+                                    f"(score: {score:.4f})"
+                                )
+                                console.print(f"    [dim]{explanation}[/dim]")
+                        except Exception:
+                            # Fallback to simple category listing if classification fails
+                            for cat in msg.categories:
+                                console.print(
+                                    f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta]"
+                                )
+                        console.print()
+            finally:
+                class_session.close()
+
+    # Clean up sessions after all printing is done
+    for session in sessions:
+        session.close()
 
 
 # ===== Messages Commands =====
@@ -261,6 +335,9 @@ def import_messages(
             f"[cyan]Auto-classification enabled (top_n={classification_top_n}, threshold={classification_threshold})[/cyan]"
         )
 
+    # Create messages service with classification support if auto_classify is enabled
+    messages_service, sessions = _create_messages_service(with_classification=auto_classify)
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -269,18 +346,19 @@ def import_messages(
         task = progress.add_task("Processing messages...", total=None)
 
         try:
-            # Use controller to handle the import
-            controller = MessagesController(db_path=SQLITE_DB_PATH)
+            # Use service to handle the import
             classification_opts = ClassificationOptions(
                 auto_classify=auto_classify,
                 top_n=classification_top_n,
                 threshold=classification_threshold,
             )
             options = ImportOptions(drop_existing=drop_existing, classification=classification_opts)
-            result = controller.import_messages(file_path=filename, options=options)
+            result = messages_service.import_from_jsonl(file_path=filename, options=options)
             progress.update(task, description=f"Loaded {result.total_imported} messages")
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {e}")
+            for session in sessions:
+                session.close()
             raise typer.Exit(code=1) from e
 
     console.print(
@@ -319,30 +397,38 @@ def import_messages(
     if auto_classify and result.preview_messages:
         console.print(Panel.fit("[bold]Classification Details[/bold]", border_style="cyan"))
 
-        for msg in result.preview_messages[:3]:  # Show details for first 3 messages
-            if msg.categories:
-                console.print(f"\n[bold cyan]Message:[/bold cyan] {msg.subject[:60]}")
-                # Get classification details with explanations
-                try:
-                    classification = controller.classify_message(
-                        msg.id, top_n=classification_top_n, threshold=classification_threshold
-                    )
-                    for cat, score, explanation in zip(
-                        classification.matched_categories,
-                        classification.scores,
-                        classification.explanations,
-                        strict=True,
-                    ):
-                        console.print(
-                            f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta] "
-                            f"(score: {score:.4f})"
-                        )
-                        console.print(f"    [dim]{explanation}[/dim]")
-                except Exception:
-                    # Fallback to simple category listing if classification fails
-                    for cat in msg.categories:
-                        console.print(f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta]")
-                console.print()
+        classification_service, class_session = _create_classification_service()
+        try:
+            for msg in result.preview_messages[:3]:  # Show details for first 3 messages
+                if msg.categories:
+                    console.print(f"\n[bold cyan]Message:[/bold cyan] {msg.subject[:60]}")
+                    # Get classification details with explanations
+                    try:
+                        classification = classification_service.classify_message_by_id(msg.id)
+                        for cat, score, explanation in zip(
+                            classification.matched_categories,
+                            classification.scores,
+                            classification.explanations,
+                            strict=True,
+                        ):
+                            console.print(
+                                f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta] "
+                                f"(score: {score:.4f})"
+                            )
+                            console.print(f"    [dim]{explanation}[/dim]")
+                    except Exception:
+                        # Fallback to simple category listing if classification fails
+                        for cat in msg.categories:
+                            console.print(
+                                f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta]"
+                            )
+                    console.print()
+        finally:
+            class_session.close()
+
+    # Clean up sessions after all printing is done
+    for session in sessions:
+        session.close()
 
 
 @messages_app.command(name="list")
@@ -355,9 +441,9 @@ def list_messages(
     """
     console.print(f"\n[bold cyan]Messages (limit={limit}, offset={offset}):[/bold cyan]\n")
 
+    messages_service, sessions = _create_messages_service(with_classification=False)
     try:
-        controller = MessagesController(db_path=SQLITE_DB_PATH)
-        messages = controller.list_messages(limit=limit, offset=offset)
+        messages = messages_service.list_messages(limit=limit, offset=offset)
 
         if not messages:
             console.print("[yellow]No messages found.[/yellow]\n")
@@ -384,6 +470,9 @@ def list_messages(
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=1) from e
+    finally:
+        for session in sessions:
+            session.close()
 
 
 @messages_app.command(name="get")
@@ -393,9 +482,9 @@ def get_message(message_id: str = typer.Argument(..., help="Message ID")):
     """
     console.print(f"\n[bold cyan]Getting message ID:[/bold cyan] {message_id}\n")
 
+    messages_service, sessions = _create_messages_service(with_classification=False)
     try:
-        controller = MessagesController(db_path=SQLITE_DB_PATH)
-        result = controller.get_message(message_id)
+        result = messages_service.get_message(message_id)
 
         if not result:
             console.print(f"[yellow]Message with ID {message_id} not found.[/yellow]\n")
@@ -421,6 +510,9 @@ def get_message(message_id: str = typer.Argument(..., help="Message ID")):
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=1) from e
+    finally:
+        for session in sessions:
+            session.close()
 
 
 @messages_app.command(name="delete")
@@ -442,9 +534,9 @@ def delete_message(
 
     console.print(f"\n[bold cyan]Deleting message ID:[/bold cyan] {message_id}")
 
+    messages_service, sessions = _create_messages_service(with_classification=False)
     try:
-        controller = MessagesController(db_path=SQLITE_DB_PATH)
-        success = controller.delete_message(message_id)
+        success = messages_service.delete_message(message_id)
 
         if not success:
             console.print(f"[yellow]Message with ID {message_id} not found.[/yellow]\n")
@@ -454,6 +546,9 @@ def delete_message(
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=1) from e
+    finally:
+        for session in sessions:
+            session.close()
 
 
 @messages_app.command(name="classify")
@@ -477,9 +572,11 @@ def classify_message(
     console.print(f"\n[bold cyan]Classifying message ID:[/bold cyan] {message_id}")
     console.print(f"[dim]Parameters: top_n={top_n}, threshold={threshold}[/dim]\n")
 
+    classification_service, session = _create_classification_service(
+        top_n=top_n, threshold=threshold
+    )
     try:
-        controller = MessagesController(db_path=SQLITE_DB_PATH)
-        result = controller.classify_message(message_id, top_n=top_n, threshold=threshold)
+        result = classification_service.classify_message_by_id(message_id)
 
         if not result.matched_categories:
             console.print("[yellow]No categories matched above the threshold.[/yellow]\n")
@@ -523,6 +620,8 @@ def classify_message(
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=1) from e
+    finally:
+        session.close()
 
 
 # ===== Category Commands =====
@@ -541,9 +640,9 @@ def create_category(
     """
     console.print(f"\n[bold cyan]Creating category:[/bold cyan] {name}")
 
+    categories_service, session = _create_categories_service()
     try:
-        controller = CategoriesController(db_path=SQLITE_DB_PATH)
-        result = controller.create_category(name, description)
+        result = categories_service.create_category(name, description)
 
         console.print("[bold green]✓[/bold green] Successfully created category\n")
 
@@ -562,6 +661,8 @@ def create_category(
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=1) from e
+    finally:
+        session.close()
 
 
 @category_app.command(name="list")
@@ -571,9 +672,9 @@ def list_categories():
     """
     console.print("\n[bold cyan]Categories:[/bold cyan]\n")
 
+    categories_service, session = _create_categories_service()
     try:
-        controller = CategoriesController(db_path=SQLITE_DB_PATH)
-        categories = controller.list_categories()
+        categories = categories_service.list_categories()
 
         if not categories:
             console.print("[yellow]No categories found.[/yellow]\n")
@@ -592,6 +693,8 @@ def list_categories():
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=1) from e
+    finally:
+        session.close()
 
 
 @category_app.command(name="get")
@@ -601,9 +704,9 @@ def get_category(category_id: int = typer.Argument(..., help="Category ID")):
     """
     console.print(f"\n[bold cyan]Getting category ID:[/bold cyan] {category_id}\n")
 
+    categories_service, session = _create_categories_service()
     try:
-        controller = CategoriesController(db_path=SQLITE_DB_PATH)
-        result = controller.get_category(category_id)
+        result = categories_service.get_category(category_id)
 
         if not result:
             console.print(f"[yellow]Category with ID {category_id} not found.[/yellow]\n")
@@ -621,6 +724,8 @@ def get_category(category_id: int = typer.Argument(..., help="Category ID")):
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=1) from e
+    finally:
+        session.close()
 
 
 @category_app.command(name="update")
@@ -643,9 +748,9 @@ def update_category(
 
     console.print(f"\n[bold cyan]Updating category ID:[/bold cyan] {category_id}")
 
+    categories_service, session = _create_categories_service()
     try:
-        controller = CategoriesController(db_path=SQLITE_DB_PATH)
-        result = controller.update_category(category_id, name=name, description=description)
+        result = categories_service.update_category(category_id, name=name, description=description)
 
         if not result:
             console.print(f"[yellow]Category with ID {category_id} not found.[/yellow]\n")
@@ -668,6 +773,8 @@ def update_category(
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=1) from e
+    finally:
+        session.close()
 
 
 @category_app.command(name="delete")
@@ -689,9 +796,9 @@ def delete_category(
 
     console.print(f"\n[bold cyan]Deleting category ID:[/bold cyan] {category_id}")
 
+    categories_service, session = _create_categories_service()
     try:
-        controller = CategoriesController(db_path=SQLITE_DB_PATH)
-        success = controller.delete_category(category_id)
+        success = categories_service.delete_category(category_id)
 
         if not success:
             console.print(f"[yellow]Category with ID {category_id} not found.[/yellow]\n")
@@ -701,6 +808,8 @@ def delete_category(
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=1) from e
+    finally:
+        session.close()
 
 
 if __name__ == "__main__":

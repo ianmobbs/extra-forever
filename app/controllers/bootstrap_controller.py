@@ -1,16 +1,17 @@
 """
-Bootstrap controller for initializing the system with sample data.
+Bootstrap controller for initializing the system with sample data (API only).
 """
 
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from pydantic import BaseModel
 
-from app.services.bootstrap_service import BootstrapResult, BootstrapService
+from app.config import config
+from app.deps import get_bootstrap_service
+from app.services.bootstrap_service import BootstrapService
 from app.services.messages_service import ClassificationOptions
-from app.stores.sqlite_store import SQLiteStore
 
 
 class MessagePreview(BaseModel):
@@ -40,10 +41,9 @@ class BootstrapResponse(BaseModel):
 
 
 class BootstrapController:
-    """Controller for bootstrap operations."""
+    """Controller for bootstrap API operations."""
 
-    def __init__(self, db_path: str = "sqlite:///messages.db"):
-        self.store = SQLiteStore(db_path=db_path, echo=False)
+    def __init__(self):
         self.router = APIRouter(prefix="/bootstrap", tags=["bootstrap"])
         self._register_routes()
 
@@ -57,12 +57,11 @@ class BootstrapController:
         categories_file: UploadFile | None = File(None),
         drop_existing: bool = Form(True),
         auto_classify: bool = Form(False),
-        classification_top_n: int = Form(3),
-        classification_threshold: float = Form(0.5),
+        classification_top_n: int = Form(config.CLASSIFICATION_TOP_N),
+        classification_threshold: float = Form(config.CLASSIFICATION_THRESHOLD),
+        service: BootstrapService = Depends(get_bootstrap_service),
     ) -> BootstrapResponse:
-        """
-        API endpoint: Bootstrap the system with messages and categories.
-        """
+        """Bootstrap the system with messages and categories via API."""
         messages_path = None
         categories_path = None
 
@@ -86,7 +85,7 @@ class BootstrapController:
                 threshold=classification_threshold,
             )
 
-            result = self.bootstrap(
+            result = service.bootstrap(
                 messages_file=messages_path,
                 categories_file=categories_path,
                 drop_existing=drop_existing,
@@ -113,30 +112,3 @@ class BootstrapController:
                 messages_path.unlink(missing_ok=True)
             if categories_path:
                 categories_path.unlink(missing_ok=True)
-
-    def bootstrap(
-        self,
-        messages_file: Path | None = None,
-        categories_file: Path | None = None,
-        drop_existing: bool = True,
-        classification_options: ClassificationOptions | None = None,
-    ) -> BootstrapResult:
-        """
-        Bootstrap the system with messages and categories.
-
-        Args:
-            messages_file: Path to messages JSONL file
-            categories_file: Path to categories JSONL file
-            drop_existing: Whether to drop existing tables
-            classification_options: Options for auto-classification
-
-        Returns:
-            BootstrapResult with statistics
-        """
-        service = BootstrapService(self.store)
-        return service.bootstrap(
-            messages_file=messages_file,
-            categories_file=categories_file,
-            drop_existing=drop_existing,
-            classification_options=classification_options,
-        )

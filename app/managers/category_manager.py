@@ -2,7 +2,6 @@
 Category manager for CRUD operations on Category entities.
 """
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from models import Category
@@ -18,13 +17,8 @@ class CategoryManager:
         """Create a new category."""
         category = Category(name=name, description=description, embedding=embedding)
         self.session.add(category)
-        try:
-            self.session.commit()
-            self.session.refresh(category)
-            return category
-        except IntegrityError as e:
-            self.session.rollback()
-            raise ValueError(f"Category with name '{name}' already exists") from e
+        self.session.flush()  # Flush to catch IntegrityError before commit
+        return category
 
     def get_by_id(self, category_id: int) -> Category | None:
         """Get a category by ID."""
@@ -57,13 +51,8 @@ class CategoryManager:
         if embedding is not None:
             category.embedding = embedding
 
-        try:
-            self.session.commit()
-            self.session.refresh(category)
-            return category
-        except IntegrityError as e:
-            self.session.rollback()
-            raise ValueError(f"Category with name '{name}' already exists") from e
+        self.session.flush()  # Flush to catch IntegrityError before commit
+        return category
 
     def delete(self, category_id: int) -> bool:
         """Delete a category by ID."""
@@ -72,7 +61,7 @@ class CategoryManager:
             return False
 
         self.session.delete(category)
-        self.session.commit()
+        self.session.flush()  # Flush to ensure delete is staged
         return True
 
     def count(self) -> int:

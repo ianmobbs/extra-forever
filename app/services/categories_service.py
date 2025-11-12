@@ -4,9 +4,11 @@ Categories service for orchestrating category operations.
 
 from dataclasses import dataclass
 
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
 from app.managers.category_manager import CategoryManager
 from app.services.embedding_service import EmbeddingService
-from app.stores.sqlite_store import SQLiteStore
 from models import Category
 
 
@@ -20,8 +22,8 @@ class CategoryResult:
 class CategoriesService:
     """Service for orchestrating category operations."""
 
-    def __init__(self, store: SQLiteStore, embedding_service: EmbeddingService | None = None):
-        self.store = store
+    def __init__(self, db_session: Session, embedding_service: EmbeddingService | None = None):
+        self.db_session = db_session
         self.embedding_service = embedding_service or EmbeddingService()
 
     def create_category(self, name: str, description: str) -> CategoryResult:
@@ -41,13 +43,18 @@ class CategoriesService:
         # Generate embedding
         embedding = self.embedding_service.embed_category(temp_category)
 
-        session = self.store.create_session()
+        manager = CategoryManager(self.db_session)
         try:
-            manager = CategoryManager(session)
             category = manager.create(name=name, description=description, embedding=embedding)
+            self.db_session.commit()
+            self.db_session.refresh(category)
             return CategoryResult(category=category)
-        finally:
-            session.close()
+        except IntegrityError as e:
+            self.db_session.rollback()
+            raise ValueError(f"Category with name '{name}' already exists") from e
+        except Exception:
+            self.db_session.rollback()
+            raise
 
     def get_category(self, category_id: int) -> CategoryResult | None:
         """
@@ -59,15 +66,11 @@ class CategoriesService:
         Returns:
             CategoryResult or None if not found
         """
-        session = self.store.create_session()
-        try:
-            manager = CategoryManager(session)
-            category = manager.get_by_id(category_id)
-            if category:
-                return CategoryResult(category=category)
-            return None
-        finally:
-            session.close()
+        manager = CategoryManager(self.db_session)
+        category = manager.get_by_id(category_id)
+        if category:
+            return CategoryResult(category=category)
+        return None
 
     def get_category_by_name(self, name: str) -> CategoryResult | None:
         """
@@ -79,15 +82,11 @@ class CategoriesService:
         Returns:
             CategoryResult or None if not found
         """
-        session = self.store.create_session()
-        try:
-            manager = CategoryManager(session)
-            category = manager.get_by_name(name)
-            if category:
-                return CategoryResult(category=category)
-            return None
-        finally:
-            session.close()
+        manager = CategoryManager(self.db_session)
+        category = manager.get_by_name(name)
+        if category:
+            return CategoryResult(category=category)
+        return None
 
     def list_categories(self) -> list[Category]:
         """
@@ -96,12 +95,8 @@ class CategoriesService:
         Returns:
             List of all categories
         """
-        session = self.store.create_session()
-        try:
-            manager = CategoryManager(session)
-            return manager.get_all()
-        finally:
-            session.close()
+        manager = CategoryManager(self.db_session)
+        return manager.get_all()
 
     def update_category(
         self, category_id: int, name: str | None = None, description: str | None = None
@@ -117,15 +112,39 @@ class CategoriesService:
         Returns:
             CategoryResult or None if not found
         """
-        session = self.store.create_session()
+        manager = CategoryManager(self.db_session)
+
+        # Get existing category to build updated version for embedding
+        existing_category = manager.get_by_id(category_id)
+        if not existing_category:
+            return None
+
         try:
-            manager = CategoryManager(session)
-            category = manager.update(category_id, name=name, description=description)
+            # Build updated category object for embedding generation
+            temp_category = Category(
+                name=name if name is not None else existing_category.name,
+                description=description
+                if description is not None
+                else existing_category.description,
+            )
+
+            # Regenerate embedding with updated data (idempotent with create)
+            embedding = self.embedding_service.embed_category(temp_category)
+
+            category = manager.update(
+                category_id, name=name, description=description, embedding=embedding
+            )
             if category:
+                self.db_session.commit()
+                self.db_session.refresh(category)
                 return CategoryResult(category=category)
             return None
-        finally:
-            session.close()
+        except IntegrityError as e:
+            self.db_session.rollback()
+            raise ValueError(f"Category with name '{name}' already exists") from e
+        except Exception:
+            self.db_session.rollback()
+            raise
 
     def delete_category(self, category_id: int) -> bool:
         """
@@ -137,9 +156,12 @@ class CategoriesService:
         Returns:
             True if deleted, False if not found
         """
-        session = self.store.create_session()
+        manager = CategoryManager(self.db_session)
         try:
-            manager = CategoryManager(session)
-            return manager.delete(category_id)
-        finally:
-            session.close()
+            result = manager.delete(category_id)
+            if result:
+                self.db_session.commit()
+            return result
+        except Exception:
+            self.db_session.rollback()
+            raise

@@ -7,24 +7,27 @@ import json
 from pathlib import Path
 
 from app.services.bootstrap_service import BootstrapResult, BootstrapService
-from app.services.messages_service import ClassificationOptions
+from app.services.categories_service import CategoriesService
+from app.services.messages_service import ClassificationOptions, MessagesService
 
 
 class TestBootstrapService:
     """Test BootstrapService class."""
 
-    def test_service_initialization(self, sqlite_store):
+    def test_service_initialization(self, db_session, sqlite_store, mock_embedding_service):
         """Test service can be initialized."""
-        service = BootstrapService(sqlite_store)
+        messages_service = MessagesService(db_session, mock_embedding_service, store=sqlite_store)
+        categories_service = CategoriesService(db_session, mock_embedding_service)
+        service = BootstrapService(sqlite_store, messages_service, categories_service)
         assert service.store == sqlite_store
 
     def test_bootstrap_with_messages_only(
-        self, sqlite_store, sample_jsonl_file, mock_embedding_service
+        self, db_session, sqlite_store, sample_jsonl_file, mock_embedding_service
     ):
         """Test bootstrapping with messages only."""
-        service = BootstrapService(sqlite_store)
-        # Inject mock embedding service
-        service.messages_service.embedding_service = mock_embedding_service
+        messages_service = MessagesService(db_session, mock_embedding_service, store=sqlite_store)
+        categories_service = CategoriesService(db_session, mock_embedding_service)
+        service = BootstrapService(sqlite_store, messages_service, categories_service)
 
         result = service.bootstrap(
             messages_file=sample_jsonl_file, categories_file=None, drop_existing=True
@@ -37,7 +40,9 @@ class TestBootstrapService:
         assert len(result.preview_messages) == 3
         assert len(result.preview_categories) == 0
 
-    def test_bootstrap_with_categories_only(self, sqlite_store, tmp_path, mock_embedding_service):
+    def test_bootstrap_with_categories_only(
+        self, db_session, sqlite_store, tmp_path, mock_embedding_service
+    ):
         """Test bootstrapping with categories only."""
         # Create sample categories file
         categories_file = tmp_path / "categories.jsonl"
@@ -45,9 +50,9 @@ class TestBootstrapService:
             f.write('{"name": "Work", "description": "Work emails"}\n')
             f.write('{"name": "Personal", "description": "Personal emails"}\n')
 
-        service = BootstrapService(sqlite_store)
-        # Inject mock embedding service
-        service.categories_service.embedding_service = mock_embedding_service
+        messages_service = MessagesService(db_session, mock_embedding_service, store=sqlite_store)
+        categories_service = CategoriesService(db_session, mock_embedding_service)
+        service = BootstrapService(sqlite_store, messages_service, categories_service)
 
         result = service.bootstrap(
             messages_file=None, categories_file=categories_file, drop_existing=True
@@ -61,7 +66,7 @@ class TestBootstrapService:
         assert len(result.preview_categories) == 2
 
     def test_bootstrap_with_messages_and_categories(
-        self, sqlite_store, sample_jsonl_file, tmp_path, mock_embedding_service
+        self, db_session, sqlite_store, sample_jsonl_file, tmp_path, mock_embedding_service
     ):
         """Test bootstrapping with both messages and categories."""
         # Create sample categories file
@@ -70,10 +75,9 @@ class TestBootstrapService:
             f.write('{"name": "Work", "description": "Work emails"}\n')
             f.write('{"name": "Personal", "description": "Personal emails"}\n')
 
-        service = BootstrapService(sqlite_store)
-        # Inject mock embedding service
-        service.messages_service.embedding_service = mock_embedding_service
-        service.categories_service.embedding_service = mock_embedding_service
+        messages_service = MessagesService(db_session, mock_embedding_service, store=sqlite_store)
+        categories_service = CategoriesService(db_session, mock_embedding_service)
+        service = BootstrapService(sqlite_store, messages_service, categories_service)
 
         result = service.bootstrap(
             messages_file=sample_jsonl_file, categories_file=categories_file, drop_existing=True
@@ -87,7 +91,7 @@ class TestBootstrapService:
         assert len(result.preview_categories) == 2
 
     def test_bootstrap_with_auto_classify(
-        self, sqlite_store, sample_jsonl_file, tmp_path, mock_embedding_service
+        self, db_session, sqlite_store, sample_jsonl_file, tmp_path, mock_embedding_service
     ):
         """Test bootstrapping with auto-classification."""
         # Create sample categories file
@@ -96,10 +100,9 @@ class TestBootstrapService:
             f.write('{"name": "Work", "description": "Work emails"}\n')
             f.write('{"name": "Personal", "description": "Personal emails"}\n')
 
-        service = BootstrapService(sqlite_store)
-        # Inject mock embedding service
-        service.messages_service.embedding_service = mock_embedding_service
-        service.categories_service.embedding_service = mock_embedding_service
+        messages_service = MessagesService(db_session, mock_embedding_service, store=sqlite_store)
+        categories_service = CategoriesService(db_session, mock_embedding_service)
+        service = BootstrapService(sqlite_store, messages_service, categories_service)
 
         classification_opts = ClassificationOptions(auto_classify=True, top_n=2, threshold=0.0)
 
@@ -129,7 +132,9 @@ class TestBootstrapService:
         finally:
             session.close()
 
-    def test_bootstrap_skips_empty_lines(self, sqlite_store, tmp_path, mock_embedding_service):
+    def test_bootstrap_skips_empty_lines(
+        self, db_session, sqlite_store, tmp_path, mock_embedding_service
+    ):
         """Test that bootstrap skips empty lines in files."""
         # Create sample files with empty lines
         messages_file = tmp_path / "messages.jsonl"
@@ -152,10 +157,9 @@ class TestBootstrapService:
             f.write('{"name": "Work", "description": "Work emails"}\n')
             f.write("\n")  # Empty line
 
-        service = BootstrapService(sqlite_store)
-        # Inject mock embedding service
-        service.messages_service.embedding_service = mock_embedding_service
-        service.categories_service.embedding_service = mock_embedding_service
+        messages_service = MessagesService(db_session, mock_embedding_service, store=sqlite_store)
+        categories_service = CategoriesService(db_session, mock_embedding_service)
+        service = BootstrapService(sqlite_store, messages_service, categories_service)
 
         result = service.bootstrap(
             messages_file=messages_file, categories_file=categories_file, drop_existing=True
@@ -164,9 +168,13 @@ class TestBootstrapService:
         assert result.total_messages == 1
         assert result.total_categories == 1
 
-    def test_bootstrap_with_nonexistent_files(self, sqlite_store):
+    def test_bootstrap_with_nonexistent_files(
+        self, db_session, sqlite_store, mock_embedding_service
+    ):
         """Test bootstrapping with nonexistent files doesn't crash."""
-        service = BootstrapService(sqlite_store)
+        messages_service = MessagesService(db_session, mock_embedding_service, store=sqlite_store)
+        categories_service = CategoriesService(db_session, mock_embedding_service)
+        service = BootstrapService(sqlite_store, messages_service, categories_service)
 
         result = service.bootstrap(
             messages_file=Path("/nonexistent/messages.jsonl"),

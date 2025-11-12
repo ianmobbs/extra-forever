@@ -5,6 +5,7 @@ Tests for MessageManager CRUD operations.
 from datetime import datetime
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.managers.message_manager import MessageManager
 from models import Message
@@ -26,6 +27,7 @@ class TestMessageManagerCRUD:
             body="Test body",
             date=datetime(2025, 1, 1, 12, 0, 0),
         )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         assert message.id == "test123"
         assert message.subject == "Test Subject"
@@ -36,7 +38,7 @@ class TestMessageManagerCRUD:
         assert count == 1
 
     def test_create_duplicate_id_raises_error(self, db_session):
-        """Test creating message with duplicate ID raises ValueError."""
+        """Test creating message with duplicate ID raises IntegrityError on flush."""
         manager = MessageManager(db_session)
 
         manager.create(
@@ -45,16 +47,15 @@ class TestMessageManagerCRUD:
             sender="sender@example.com",
             to=["recipient@example.com"],
         )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(IntegrityError):  # IntegrityError from flush
             manager.create(
                 id="unique123",
                 subject="Second",
                 sender="sender@example.com",
                 to=["recipient@example.com"],
             )
-
-        assert "already exists" in str(exc_info.value)
 
     def test_get_by_id(self, db_session):
         """Test get_by_id retrieves correct message."""
@@ -66,6 +67,7 @@ class TestMessageManagerCRUD:
             sender="sender@example.com",
             to=["recipient@example.com"],
         )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         retrieved = manager.get_by_id("find123")
         assert retrieved is not None
@@ -91,6 +93,7 @@ class TestMessageManagerCRUD:
                 to=["recipient@example.com"],
                 date=datetime(2025, 1, i + 1, 12, 0, 0),
             )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         all_messages = manager.get_all()
         assert len(all_messages) == 5
@@ -109,6 +112,7 @@ class TestMessageManagerCRUD:
                 sender="sender@example.com",
                 to=["recipient@example.com"],
             )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         messages = manager.get_all(limit=3)
         assert len(messages) == 3
@@ -125,6 +129,7 @@ class TestMessageManagerCRUD:
                 to=["recipient@example.com"],
                 date=datetime(2025, 1, 1, 12, i, 0),
             )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         messages = manager.get_all(offset=5)
         assert len(messages) == 5
@@ -140,6 +145,7 @@ class TestMessageManagerCRUD:
                 sender="sender@example.com",
                 to=["recipient@example.com"],
             )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         messages = manager.get_all(limit=3, offset=2)
         assert len(messages) == 3
@@ -154,8 +160,10 @@ class TestMessageManagerCRUD:
             sender="sender@example.com",
             to=["recipient@example.com"],
         )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         updated = manager.update("update123", subject="New Subject")
+        db_session.commit()  # Commit is now done by caller (service layer)
         assert updated is not None
         assert updated.subject == "New Subject"
         assert updated.sender == "sender@example.com"
@@ -171,10 +179,12 @@ class TestMessageManagerCRUD:
             to=["old@example.com"],
             snippet="Old snippet",
         )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         updated = manager.update(
             "update123", subject="New Subject", sender="new@example.com", snippet="New snippet"
         )
+        db_session.commit()  # Commit is now done by caller (service layer)
         assert updated is not None
         assert updated.subject == "New Subject"
         assert updated.sender == "new@example.com"
@@ -198,8 +208,10 @@ class TestMessageManagerCRUD:
             to=["recipient@example.com"],
             body="Old body",
         )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         updated = manager.update("body_test", body="New body")
+        db_session.commit()  # Commit is now done by caller (service layer)
         assert updated is not None
         assert updated.body == "New body"
 
@@ -217,8 +229,10 @@ class TestMessageManagerCRUD:
             to=["recipient@example.com"],
             date=old_date,
         )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         updated = manager.update("date_test", date=new_date)
+        db_session.commit()  # Commit is now done by caller (service layer)
         assert updated is not None
         assert updated.date == new_date
 
@@ -238,10 +252,12 @@ class TestMessageManagerCRUD:
             body="Old body",
             date=old_date,
         )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         updated = manager.update(
             "all_fields_test", snippet="New snippet", body="New body", date=new_date
         )
+        db_session.commit()  # Commit is now done by caller (service layer)
         assert updated is not None
         assert updated.snippet == "New snippet"
         assert updated.body == "New body"
@@ -257,8 +273,10 @@ class TestMessageManagerCRUD:
             sender="sender@example.com",
             to=["recipient@example.com"],
         )
+        db_session.commit()  # Commit is now done by caller (service layer)
 
         success = manager.delete("delete123")
+        db_session.commit()  # Commit is now done by caller (service layer)
         assert success is True
 
         # Verify deleted
