@@ -1,7 +1,16 @@
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, String, Text, JSON, DateTime
+from sqlalchemy import Column, Integer, String, Text, JSON, DateTime, Table, ForeignKey
+from sqlalchemy.orm import relationship
 
 Base = declarative_base()
+
+# Many-to-many association table for messages and categories
+message_categories = Table(
+    'message_categories',
+    Base.metadata,
+    Column('message_id', String, ForeignKey('messages.id', ondelete='CASCADE'), primary_key=True),
+    Column('category_id', Integer, ForeignKey('categories.id', ondelete='CASCADE'), primary_key=True)
+)
 
 class Message(Base):
     """
@@ -17,6 +26,9 @@ class Message(Base):
     body = Column(Text, nullable=True) 
     date = Column(DateTime, nullable=True)
     embedding = Column(JSON, nullable=True)  # List[float] stored as JSON
+    
+    # Many-to-many relationship with categories
+    categories = relationship("Category", secondary=message_categories, back_populates="messages")
 
     def __repr__(self):
         body_preview = ""
@@ -38,6 +50,9 @@ class Category(Base):
     name = Column(String, nullable=False, unique=True)
     description = Column(Text, nullable=False)
     embedding = Column(JSON, nullable=True)  # List[float] stored as JSON
+    
+    # Many-to-many relationship with messages
+    messages = relationship("Message", secondary=message_categories, back_populates="categories")
 
     def __repr__(self):
         desc_preview = ""

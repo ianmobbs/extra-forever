@@ -15,6 +15,14 @@ from app.services.embedding_service import EmbeddingService
 
 
 @dataclass
+class ClassificationOptions:
+    """Options for message classification."""
+    auto_classify: bool = False
+    top_n: int = 3
+    threshold: float = 0.5
+
+
+@dataclass
 class ImportResult:
     """Result of a message import operation."""
     total_imported: int
@@ -25,6 +33,11 @@ class ImportResult:
 class ImportOptions:
     """Options for message import."""
     drop_existing: bool = True
+    classification: ClassificationOptions = None
+    
+    def __post_init__(self):
+        if self.classification is None:
+            self.classification = ClassificationOptions()
 
 
 @dataclass
@@ -70,6 +83,14 @@ class MessagesService:
             # Get preview
             preview = manager.get_first_n(5)
             
+            # Auto-classify messages if requested
+            if options.classification.auto_classify:
+                self._classify_all_messages(
+                    messages,
+                    top_n=options.classification.top_n,
+                    threshold=options.classification.threshold
+                )
+            
             return ImportResult(
                 total_imported=len(messages),
                 preview_messages=preview
@@ -107,6 +128,36 @@ class MessagesService:
                 messages.append(message)
         
         return messages
+    
+    def _classify_all_messages(
+        self,
+        messages: List[Message],
+        top_n: int,
+        threshold: float
+    ) -> None:
+        """
+        Classify all messages and assign them to categories.
+        
+        Args:
+            messages: List of messages to classify
+            top_n: Maximum number of categories per message
+            threshold: Minimum similarity threshold
+        """
+        from app.services.classification_service import ClassificationService
+        
+        classification_service = ClassificationService(
+            self.store,
+            top_n=top_n,
+            threshold=threshold
+        )
+        
+        for message in messages:
+            try:
+                # Classify message (which also assigns categories)
+                classification_service.classify_message(message.id)
+            except ValueError:
+                # Skip messages that can't be classified (e.g., no categories available)
+                pass
     
     def create_message(
         self,

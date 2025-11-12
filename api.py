@@ -4,6 +4,7 @@ FastAPI application entry point.
 from fastapi import FastAPI
 from app.controllers.messages_controller import MessagesController
 from app.controllers.categories_controller import CategoriesController
+from app.controllers.bootstrap_controller import BootstrapController
 
 # Create FastAPI app
 app = FastAPI(
@@ -15,8 +16,10 @@ app = FastAPI(
 # Initialize controllers
 messages_controller = MessagesController()
 categories_controller = CategoriesController()
+bootstrap_controller = BootstrapController()
 
 # Register controller routers
+app.include_router(bootstrap_controller.router)
 app.include_router(messages_controller.router)
 app.include_router(categories_controller.router)
 

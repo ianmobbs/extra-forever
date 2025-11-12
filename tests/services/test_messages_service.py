@@ -137,4 +137,3 @@ class TestMessagesService:
         count = session.query(Message).count()
         assert count == 2
         session.close()
-

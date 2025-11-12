@@ -3,7 +3,7 @@ Message manager for CRUD operations on Message entities.
 """
 from typing import List, Optional
 from datetime import datetime
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 from models import Message
 
@@ -39,8 +39,8 @@ class MessageManager:
         self.session.add(message)
         try:
             self.session.commit()
-            self.session.refresh(message)
-            return message
+            # Re-query with eager loading to ensure categories are loaded
+            return self.session.query(Message).options(joinedload(Message.categories)).filter(Message.id == id).first()
         except IntegrityError:
             self.session.rollback()
             raise ValueError(f"Message with id '{id}' already exists")
@@ -52,11 +52,11 @@ class MessageManager:
     
     def get_by_id(self, message_id: str) -> Optional[Message]:
         """Get a message by ID."""
-        return self.session.query(Message).filter(Message.id == message_id).first()
+        return self.session.query(Message).options(joinedload(Message.categories)).filter(Message.id == message_id).first()
     
     def get_all(self, limit: Optional[int] = None, offset: Optional[int] = None) -> List[Message]:
         """Get all messages with optional pagination."""
-        query = self.session.query(Message).order_by(Message.date.desc().nullslast())
+        query = self.session.query(Message).options(joinedload(Message.categories)).order_by(Message.date.desc().nullslast())
         if offset is not None:
             query = query.offset(offset)
         if limit is not None:
@@ -65,7 +65,7 @@ class MessageManager:
     
     def get_first_n(self, n: int) -> List[Message]:
         """Retrieve first n messages from the database."""
-        return self.session.query(Message).limit(n).all()
+        return self.session.query(Message).options(joinedload(Message.categories)).limit(n).all()
     
     def update(
         self,
@@ -99,8 +99,8 @@ class MessageManager:
             message.embedding = embedding
         
         self.session.commit()
-        self.session.refresh(message)
-        return message
+        # Re-query with eager loading
+        return self.session.query(Message).options(joinedload(Message.categories)).filter(Message.id == message_id).first()
     
     def delete(self, message_id: str) -> bool:
         """Delete a message by ID."""
