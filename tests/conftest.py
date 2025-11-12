@@ -160,3 +160,13 @@ def patch_embedding_service(monkeypatch):
     monkeypatch.setattr("app.services.embedding_service.EmbeddingService", MockEmbeddingService)
     monkeypatch.setattr("app.services.categories_service.EmbeddingService", MockEmbeddingService)
     monkeypatch.setattr("app.services.messages_service.EmbeddingService", MockEmbeddingService)
+
+
+@pytest.fixture(autouse=True)
+def mock_openai_api_key(monkeypatch):
+    """
+    Automatically set a fake OPENAI_API_KEY for all tests.
+    This allows LLMClassificationStrategy to initialize without a real API key.
+    Tests can then replace the agent's model with a FunctionModel for mocking.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-fake-test-key-for-testing-only")

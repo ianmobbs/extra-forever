@@ -6,6 +6,9 @@ import base64
 import json
 from pathlib import Path
 
+from pydantic_ai import ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
 from app.services.bootstrap_service import BootstrapResult, BootstrapService
 from app.services.categories_service import CategoriesService
 from app.services.messages_service import ClassificationOptions, MessagesService
@@ -91,7 +94,13 @@ class TestBootstrapService:
         assert len(result.preview_categories) == 2
 
     def test_bootstrap_with_auto_classify(
-        self, db_session, sqlite_store, sample_jsonl_file, tmp_path, mock_embedding_service
+        self,
+        db_session,
+        sqlite_store,
+        sample_jsonl_file,
+        tmp_path,
+        mock_embedding_service,
+        monkeypatch,
     ):
         """Test bootstrapping with auto-classification."""
         # Create sample categories file
@@ -99,6 +108,34 @@ class TestBootstrapService:
         with open(categories_file, "w") as f:
             f.write('{"name": "Work", "description": "Work emails"}\n')
             f.write('{"name": "Personal", "description": "Personal emails"}\n')
+
+        # Create a mock function that always returns True for classification
+        def mock_model_func(messages, info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        content=json.dumps(
+                            {
+                                "is_in_category": True,
+                                "explanation": "This message matches the category",
+                            }
+                        )
+                    )
+                ]
+            )
+
+        function_model = FunctionModel(mock_model_func)
+
+        # Patch LLMClassificationStrategy to use our mock model
+        from app.services.classification.strategies import LLMClassificationStrategy
+
+        original_init = LLMClassificationStrategy.__init__
+
+        def patched_init(self, model: str = "openai:gpt-4o-mini"):
+            original_init(self, model)
+            self._agent._model = function_model
+
+        monkeypatch.setattr(LLMClassificationStrategy, "__init__", patched_init)
 
         messages_service = MessagesService(db_session, mock_embedding_service, store=sqlite_store)
         categories_service = CategoriesService(db_session, mock_embedding_service)
