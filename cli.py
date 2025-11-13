@@ -30,6 +30,12 @@ logging.basicConfig(
     handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
 )
 
+# Suppress noisy HTTP request logs from OpenAI/httpx
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
+
+
 # Initialize shared store (lazily)
 _store = SQLiteStore(db_path=config.DATABASE_URL, echo=config.DATABASE_ECHO)
 _store.init_db(drop_existing=False)  # Initialize tables without dropping
@@ -270,35 +276,18 @@ def bootstrap_system(
         if auto_classify and result.preview_messages:
             console.print(Panel.fit("[bold]Classification Details[/bold]", border_style="cyan"))
 
-            # Re-classify preview messages to get detailed explanations
-            classification_service, class_session = _create_classification_service()
-            try:
-                for msg in result.preview_messages[:3]:  # Show details for first 3 messages
-                    if msg.categories:
-                        console.print(f"\n[bold cyan]Message:[/bold cyan] {msg.subject[:60]}")
-                        # Get classification details with explanations
-                        try:
-                            classification = classification_service.classify_message_by_id(msg.id)
-                            for cat, score, explanation in zip(
-                                classification.matched_categories,
-                                classification.scores,
-                                classification.explanations,
-                                strict=True,
-                            ):
-                                console.print(
-                                    f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta] "
-                                    f"(score: {score:.4f})"
-                                )
-                                console.print(f"    [dim]{explanation}[/dim]")
-                        except Exception:
-                            # Fallback to simple category listing if classification fails
-                            for cat in msg.categories:
-                                console.print(
-                                    f"  [green]✓[/green] Category: [magenta]{cat.name}[/magenta]"
-                                )
-                        console.print()
-            finally:
-                class_session.close()
+            # Show classification details from the message_categories association table
+            for msg in result.preview_messages[:3]:  # Show details for first 3 messages
+                if msg.message_categories:
+                    console.print(f"\n[bold cyan]Message:[/bold cyan] {msg.subject[:60]}")
+                    # Access the association objects directly to get score and explanation
+                    for mc in msg.message_categories:
+                        console.print(
+                            f"  [green]✓[/green] Category: [magenta]{mc.category.name}[/magenta] "
+                            f"(score: {mc.score:.4f})"
+                        )
+                        console.print(f"    [dim]{mc.explanation}[/dim]")
+                    console.print()
 
     # Clean up sessions after all printing is done
     for session in sessions:

@@ -2,12 +2,19 @@
 FastAPI application entry point.
 """
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.controllers.bootstrap_controller import BootstrapController
 from app.controllers.categories_controller import CategoriesController
 from app.controllers.messages_controller import MessagesController
+
+# Suppress noisy HTTP request logs from OpenAI/httpx
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 
 # Create FastAPI app
 app = FastAPI(

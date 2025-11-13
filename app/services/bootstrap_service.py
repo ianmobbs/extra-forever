@@ -205,7 +205,10 @@ class BootstrapService:
         start_time = time.time()
         from app.services.classification import ClassificationService, LLMClassificationStrategy
 
-        logger.info(f"Classifying {len(message_ids)} messages using LLM strategy")
+        batch_size = 20
+        logger.info(
+            f"Classifying {len(message_ids)} messages using LLM strategy (batches of {batch_size})"
+        )
         # Create a new session for classification batch operation
         session = self.store.create_session()
         try:
@@ -219,16 +222,27 @@ class BootstrapService:
             )
 
             classified_count = 0
-            for idx, message_id in enumerate(message_ids, 1):
-                try:
-                    if idx % 5 == 0:
-                        logger.debug(f"Classifying message {idx}/{len(message_ids)}")
-                    await classification_service.classify_message_by_id(message_id)
-                    classified_count += 1
-                except ValueError as e:
-                    logger.warning(f"Failed to classify message {message_id}: {e}")
-                    # Skip messages that can't be classified
-                    pass
+            total_messages = len(message_ids)
+
+            # Process messages in batches of 20
+            for batch_idx in range(0, total_messages, batch_size):
+                batch = message_ids[batch_idx : batch_idx + batch_size]
+                batch_num = (batch_idx // batch_size) + 1
+                total_batches = (total_messages + batch_size - 1) // batch_size
+
+                logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} messages)")
+
+                # Classify all messages in this batch concurrently
+                async def classify_one(msg_id: str) -> bool:
+                    try:
+                        await classification_service.classify_message_by_id(msg_id)
+                        return True
+                    except ValueError as e:
+                        logger.warning(f"Failed to classify message {msg_id}: {e}")
+                        return False
+
+                results = await asyncio.gather(*[classify_one(msg_id) for msg_id in batch])
+                classified_count += sum(results)
 
             elapsed = time.time() - start_time
             logger.info(
