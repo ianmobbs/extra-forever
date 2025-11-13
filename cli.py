@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 
@@ -417,7 +418,9 @@ def import_messages(
                     console.print(f"\n[bold cyan]Message:[/bold cyan] {msg.subject[:60]}")
                     # Get classification details with explanations
                     try:
-                        classification = classification_service.classify_message_by_id(msg.id)
+                        classification = asyncio.run(
+                            classification_service.classify_message_by_id(msg.id)
+                        )
                         for cat, score, explanation in zip(
                             classification.matched_categories,
                             classification.scores,
@@ -589,7 +592,7 @@ def classify_message(
         top_n=top_n, threshold=threshold
     )
     try:
-        result = classification_service.classify_message_by_id(message_id)
+        result = asyncio.run(classification_service.classify_message_by_id(message_id))
 
         if not result.matched_categories:
             console.print("[yellow]No categories matched above the threshold.[/yellow]\n")
