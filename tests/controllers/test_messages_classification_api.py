@@ -15,7 +15,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from app.controllers.messages_controller import MessagesController
 from app.deps import get_db_session, get_messages_service
 from app.services.categories_service import CategoriesService
-from app.services.classification import LLMClassificationStrategy
+from app.services.classification import ClassificationService, LLMClassificationStrategy
+from app.services.classification.strategies import EmbeddingSimilarityStrategy
 from app.services.messages_service import MessagesService
 from app.stores.sqlite_store import SQLiteStore
 
@@ -24,7 +25,7 @@ class TestMessageClassificationAPI:
     """Test classification API endpoint."""
 
     @pytest.fixture
-    def client(self, mock_embedding_service):
+    def client(self, mock_embedding_service, monkeypatch):
         """Create a test client with dependency overrides."""
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
             db_path = f"sqlite:///{tmp.name}"
@@ -34,6 +35,21 @@ class TestMessageClassificationAPI:
             session = store.create_session()
             messages_service = MessagesService(session, mock_embedding_service, store=store)
             categories_service = CategoriesService(session, mock_embedding_service)
+
+            # Monkeypatch ClassificationService.__init__ to use EmbeddingSimilarityStrategy
+            original_init = ClassificationService.__init__
+
+            def patched_init(self, db_session, strategy=None, top_n=3, threshold=0.5):
+                # Always use EmbeddingSimilarityStrategy for tests
+                original_init(
+                    self,
+                    db_session,
+                    strategy=EmbeddingSimilarityStrategy(),
+                    top_n=top_n,
+                    threshold=threshold,
+                )
+
+            monkeypatch.setattr(ClassificationService, "__init__", patched_init)
 
             def override_get_messages_service():
                 return messages_service

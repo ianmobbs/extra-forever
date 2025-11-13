@@ -4,6 +4,7 @@ Messages service for orchestrating message import and processing.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import suppress
@@ -201,11 +202,19 @@ class MessagesService:
                 "Pass a ClassificationService instance during MessagesService initialization."
             )
 
+        # Run async classification in a sync context
+        asyncio.run(self._classify_all_messages_async(messages))
+
+    async def _classify_all_messages_async(self, messages: list[Message]) -> None:
+        """Async helper for classifying all messages."""
+        if self.classification_service is None:
+            return
+
         for message in messages:
             # Skip messages that can't be classified (e.g., no categories available)
             with suppress(ValueError):
                 # Classify message (which also assigns categories)
-                self.classification_service.classify_message_by_id(message.id)
+                await self.classification_service.classify_message_by_id(message.id)
 
     def create_message(
         self,

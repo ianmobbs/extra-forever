@@ -53,7 +53,7 @@ class TestClassificationService:
         assert service.top_n == 5
         assert service.threshold == 0.7
 
-    def test_classify_message_basic(self, db_session, mock_embedding_service):
+    async def test_classify_message_basic(self, db_session, mock_embedding_service):
         """Test basic message classification."""
         # Create message with embedding
         messages_service = MessagesService(db_session, mock_embedding_service)
@@ -73,9 +73,10 @@ class TestClassificationService:
             name="Personal", description="Personal emails from friends and family"
         )
 
-        # Classify
-        service = ClassificationService(db_session, top_n=2, threshold=0.0)
-        result = service.classify_message_by_id("msg1")
+        # Classify using embedding similarity strategy
+        strategy = EmbeddingSimilarityStrategy()
+        service = ClassificationService(db_session, strategy=strategy, top_n=2, threshold=0.0)
+        result = await service.classify_message_by_id("msg1")
 
         assert isinstance(result, ClassificationResult)
         assert result.message.id == "msg1"
@@ -91,14 +92,14 @@ class TestClassificationService:
             assert isinstance(explanation, str)
             assert len(explanation) > 0
 
-    def test_classify_message_not_found(self, db_session):
+    async def test_classify_message_not_found(self, db_session):
         """Test classify with non-existent message."""
         service = ClassificationService(db_session)
 
         with pytest.raises(ValueError, match=r"Message with ID .* not found"):
-            service.classify_message_by_id("nonexistent")
+            await service.classify_message_by_id("nonexistent")
 
-    def test_classify_message_no_embedding(self, sqlite_store, db_session):
+    async def test_classify_message_no_embedding(self, sqlite_store, db_session):
         """Test classify with message that has no embedding."""
         # Create message without embedding
         message = Message(
@@ -114,9 +115,9 @@ class TestClassificationService:
         service = ClassificationService(db_session)
 
         with pytest.raises(ValueError, match="has no embedding"):
-            service.classify_message_by_id("msg_no_embed")
+            await service.classify_message_by_id("msg_no_embed")
 
-    def test_classify_message_no_categories(self, db_session, mock_embedding_service):
+    async def test_classify_message_no_categories(self, db_session, mock_embedding_service):
         """Test classify when no categories exist."""
         # Create message with embedding
         messages_service = MessagesService(db_session, mock_embedding_service)
@@ -127,9 +128,9 @@ class TestClassificationService:
         service = ClassificationService(db_session)
 
         with pytest.raises(ValueError, match="No categories with embeddings found"):
-            service.classify_message_by_id("msg1")
+            await service.classify_message_by_id("msg1")
 
-    def test_classify_message_respects_threshold(self, db_session):
+    async def test_classify_message_respects_threshold(self, db_session):
         """Test that classification respects similarity threshold."""
         # Create message with specific embedding
         message_embedding = [1.0] + [0.0] * 1535
@@ -154,15 +155,16 @@ class TestClassificationService:
         db_session.commit()
 
         # Use high threshold - should not match
-        service = ClassificationService(db_session, top_n=10, threshold=0.9)
-        result = service.classify_message_by_id("msg1")
+        strategy = EmbeddingSimilarityStrategy()
+        service = ClassificationService(db_session, strategy=strategy, top_n=10, threshold=0.9)
+        result = await service.classify_message_by_id("msg1")
 
         # Should have no matches above threshold
         assert len(result.matched_categories) == 0
         assert len(result.scores) == 0
         assert len(result.explanations) == 0
 
-    def test_classify_message_respects_top_n(self, db_session):
+    async def test_classify_message_respects_top_n(self, db_session):
         """Test that classification respects top_n limit."""
         # Create message
         message_embedding = [1.0, 1.0] + [0.0] * 1534
@@ -188,15 +190,16 @@ class TestClassificationService:
         db_session.commit()
 
         # Set top_n to 3
-        service = ClassificationService(db_session, top_n=3, threshold=0.0)
-        result = service.classify_message_by_id("msg1")
+        strategy = EmbeddingSimilarityStrategy()
+        service = ClassificationService(db_session, strategy=strategy, top_n=3, threshold=0.0)
+        result = await service.classify_message_by_id("msg1")
 
         # Should only return 3 categories
         assert len(result.matched_categories) == 3
         assert len(result.scores) == 3
         assert len(result.explanations) == 3
 
-    def test_classify_message_scores_sorted_descending(self, db_session):
+    async def test_classify_message_scores_sorted_descending(self, db_session):
         """Test that results are sorted by score in descending order."""
         # Create message
         message_embedding = [1.0, 0.0] + [0.0] * 1534
@@ -224,14 +227,15 @@ class TestClassificationService:
         db_session.add_all([cat1, cat2, cat3])
         db_session.commit()
 
-        service = ClassificationService(db_session, top_n=10, threshold=0.0)
-        result = service.classify_message_by_id("msg1")
+        strategy = EmbeddingSimilarityStrategy()
+        service = ClassificationService(db_session, strategy=strategy, top_n=10, threshold=0.0)
+        result = await service.classify_message_by_id("msg1")
 
         # Scores should be in descending order
         for i in range(len(result.scores) - 1):
             assert result.scores[i] >= result.scores[i + 1]
 
-    def test_classify_and_assign(self, sqlite_store, mock_embedding_service, db_session):
+    async def test_classify_and_assign(self, sqlite_store, mock_embedding_service, db_session):
         """Test classify_and_assign persists relationships."""
         # Create message
         messages_service = MessagesService(db_session, mock_embedding_service)
@@ -244,9 +248,10 @@ class TestClassificationService:
         categories_service.create_category(name="Work", description="Work emails")
         categories_service.create_category(name="Personal", description="Personal emails")
 
-        # Classify and assign
-        service = ClassificationService(db_session, top_n=2, threshold=0.0)
-        result = service.classify_message_by_id("msg1")
+        # Classify and assign using embedding similarity strategy
+        strategy = EmbeddingSimilarityStrategy()
+        service = ClassificationService(db_session, strategy=strategy, top_n=2, threshold=0.0)
+        result = await service.classify_message_by_id("msg1")
 
         # Verify result
         assert len(result.matched_categories) > 0
@@ -270,7 +275,7 @@ class TestClassificationService:
         finally:
             session.close()
 
-    def test_classify_and_assign_persists_metadata(
+    async def test_classify_and_assign_persists_metadata(
         self, sqlite_store, mock_embedding_service, db_session
     ):
         """Test that classify_and_assign persists score, explanation, and timestamp."""
@@ -288,9 +293,10 @@ class TestClassificationService:
         categories_service.create_category(name="Work", description="Work-related emails")
         categories_service.create_category(name="Personal", description="Personal emails")
 
-        # Classify and assign
-        service = ClassificationService(db_session, top_n=2, threshold=0.0)
-        result = service.classify_message_by_id("msg1")
+        # Classify and assign using embedding similarity strategy
+        strategy = EmbeddingSimilarityStrategy()
+        service = ClassificationService(db_session, strategy=strategy, top_n=2, threshold=0.0)
+        result = await service.classify_message_by_id("msg1")
 
         # Verify result has metadata
         assert len(result.matched_categories) > 0
@@ -326,7 +332,7 @@ class TestClassificationService:
         finally:
             session.close()
 
-    def test_classify_and_assign_clears_previous_assignments(
+    async def test_classify_and_assign_clears_previous_assignments(
         self, sqlite_store, mock_embedding_service, db_session
     ):
         """Test that classify_and_assign clears previous category assignments."""
@@ -378,8 +384,9 @@ class TestClassificationService:
             session.close()
 
         # Now classify and assign (should replace previous assignments)
-        service = ClassificationService(db_session, top_n=2, threshold=0.0)
-        result = service.classify_message_by_id("msg1")
+        strategy = EmbeddingSimilarityStrategy()
+        service = ClassificationService(db_session, strategy=strategy, top_n=2, threshold=0.0)
+        result = await service.classify_message_by_id("msg1")
 
         result_cat_count = len(result.matched_categories)
 

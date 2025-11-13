@@ -2,6 +2,7 @@
 Bootstrap service for initializing the system with sample data.
 """
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -102,8 +103,8 @@ class BootstrapService:
                 f"Starting classification with top_n={classification_options.top_n}, "
                 f"threshold={classification_options.threshold}"
             )
-            total_classified = self._classify_messages(
-                [msg.id for msg in messages], classification_options
+            total_classified = asyncio.run(
+                self._classify_messages([msg.id for msg in messages], classification_options)
             )
             logger.info(f"Classified {total_classified} messages")
 
@@ -193,7 +194,7 @@ class BootstrapService:
         logger.info(f"Messages bootstrap took {time.time() - start_time:.2f}s")
         return messages
 
-    def _classify_messages(
+    async def _classify_messages(
         self, message_ids: list[str], classification_options: ClassificationOptions
     ) -> int:
         """
@@ -222,7 +223,7 @@ class BootstrapService:
                 try:
                     if idx % 5 == 0:
                         logger.debug(f"Classifying message {idx}/{len(message_ids)}")
-                    classification_service.classify_message_by_id(message_id)
+                    await classification_service.classify_message_by_id(message_id)
                     classified_count += 1
                 except ValueError as e:
                     logger.warning(f"Failed to classify message {message_id}: {e}")

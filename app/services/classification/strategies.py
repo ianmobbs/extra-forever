@@ -44,6 +44,24 @@ class ClassificationStrategy(ABC):
         """
         pass
 
+    async def classify_async(
+        self, message: Message, categories: list[Category], top_n: int, threshold: float
+    ) -> list[ClassificationMatch]:
+        """
+        Async version of classify. Default implementation calls sync version.
+        Override this in strategies that need async behavior.
+
+        Args:
+            message: Message to classify (must have embedding)
+            categories: List of categories to match against (must have embeddings)
+            top_n: Maximum number of matches to return
+            threshold: Minimum score threshold
+
+        Returns:
+            List of ClassificationMatch objects, sorted by score descending
+        """
+        return self.classify(message, categories, top_n, threshold)
+
 
 class EmbeddingSimilarityStrategy(ClassificationStrategy):
     """Classification strategy using cosine similarity of embeddings."""
@@ -166,7 +184,10 @@ class LLMClassificationStrategy(ClassificationStrategy):
         self, message: Message, categories: list[Category], top_n: int, threshold: float
     ) -> list[ClassificationMatch]:
         """
-        Classify using an LLM to determine category membership.
+        Classify using an LLM to determine category membership (sync version).
+
+        WARNING: This sync version doesn't work well in async contexts (e.g., FastAPI).
+        Use classify_async() instead when in an async context.
 
         The LLM evaluates all categories in a single request, returning matches with
         confidence scores and explanations.
@@ -195,10 +216,72 @@ class LLMClassificationStrategy(ClassificationStrategy):
         # Build the prompt with all categories
         prompt = self._build_multi_category_prompt(message_text, categories)
 
-        # Call the LLM agent once with all categories
+        # Call the LLM agent once with all categories (sync version)
         result = self._agent.run_sync(prompt)
         output: MultiCategoryMatchOutput = result.output
 
+        return self._process_llm_output(output, categories, top_n, threshold)
+
+    async def classify_async(
+        self, message: Message, categories: list[Category], top_n: int, threshold: float
+    ) -> list[ClassificationMatch]:
+        """
+        Classify using an LLM to determine category membership (async version).
+
+        This is the preferred method to use in async contexts (e.g., FastAPI endpoints).
+
+        The LLM evaluates all categories in a single request, returning matches with
+        confidence scores and explanations.
+
+        Args:
+            message: Message to classify (doesn't require embedding)
+            categories: List of categories to match against
+            top_n: Maximum number of matches to return
+            threshold: Minimum confidence score (0-1) to include a match
+
+        Returns:
+            List of ClassificationMatch objects for categories the LLM matched,
+            sorted by confidence score in descending order
+
+        Note:
+            - This method makes a single LLM call to evaluate all categories (O(M) instead of O(M*N))
+            - The confidence scores from the LLM are used directly as scores
+            - Only matches with is_in_category=True and confidence >= threshold are returned
+        """
+        if not categories:
+            return []
+
+        # Build a rich text representation of the message
+        message_text = self._build_message_text(message)
+
+        # Build the prompt with all categories
+        prompt = self._build_multi_category_prompt(message_text, categories)
+
+        # Call the LLM agent once with all categories (async version)
+        result = await self._agent.run(prompt)
+        output: MultiCategoryMatchOutput = result.output
+
+        return self._process_llm_output(output, categories, top_n, threshold)
+
+    def _process_llm_output(
+        self,
+        output: MultiCategoryMatchOutput,
+        categories: list[Category],
+        top_n: int,
+        threshold: float,
+    ) -> list[ClassificationMatch]:
+        """
+        Process the LLM output and return matches.
+
+        Args:
+            output: Output from the LLM
+            categories: List of categories that were evaluated
+            top_n: Maximum number of matches to return
+            threshold: Minimum confidence score
+
+        Returns:
+            List of ClassificationMatch objects
+        """
         # Process all matches from the LLM
         matches: list[ClassificationMatch] = []
         for match_output in output.matches:

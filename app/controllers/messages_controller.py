@@ -271,7 +271,7 @@ class MessagesController:
         try:
             # Create classification service with the requested top_n and threshold
             service = ClassificationService(db_session, top_n=top_n, threshold=threshold)
-            result = service.classify_message_by_id(message_id)
+            result = await service.classify_message_by_id(message_id)
 
             classifications = [
                 CategoryClassification(

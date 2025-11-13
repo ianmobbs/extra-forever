@@ -18,7 +18,7 @@ from app.managers.category_manager import CategoryManager
 from app.managers.message_manager import MessageManager
 from app.services.classification.strategies import (
     ClassificationStrategy,
-    EmbeddingSimilarityStrategy,
+    LLMClassificationStrategy,
 )
 from models import Category, Message
 
@@ -55,11 +55,11 @@ class ClassificationService:
             threshold: Minimum score to include a category (0-1)
         """
         self.db_session = db_session
-        self.strategy = strategy or EmbeddingSimilarityStrategy()
+        self.strategy = strategy or LLMClassificationStrategy()
         self.top_n = top_n
         self.threshold = threshold
 
-    def classify_message(
+    async def classify_message(
         self, message: Message, categories: list[Category], assign: bool = True
     ) -> ClassificationResult:
         """
@@ -96,7 +96,7 @@ class ClassificationService:
             )
 
         # Run classification strategy (pure logic)
-        matches = self.strategy.classify(
+        matches = await self.strategy.classify_async(
             message=message,
             categories=categories_with_embeddings,
             top_n=self.top_n,
@@ -132,7 +132,9 @@ class ClassificationService:
             explanations=explanations,
         )
 
-    def classify_message_by_id(self, message_id: str, assign: bool = True) -> ClassificationResult:
+    async def classify_message_by_id(
+        self, message_id: str, assign: bool = True
+    ) -> ClassificationResult:
         """
         Classify a message by ID (fetches message and categories from DB).
 
@@ -161,7 +163,7 @@ class ClassificationService:
         logger.debug(f"Found {len(categories)} categories for classification")
 
         # Classify using the main method
-        return self.classify_message(message=message, categories=categories, assign=assign)
+        return await self.classify_message(message=message, categories=categories, assign=assign)
 
     def _assign_categories(
         self, message_id: str, classifications: list[tuple[int, float, str]]
